@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Chat</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0f0f13; color: #e4e4e7; height: 100vh; overflow: hidden;
+  }
+  .app { display: flex; height: 100vh; }
+  .sidebar {
+    width: 280px; background: #1a1a22; border-right: 1px solid #2a2a35;
+    display: flex; flex-direction: column; flex-shrink: 0;
+  }
+  .sidebar-header {
+    padding: 16px; border-bottom: 1px solid #2a2a35;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .sidebar-header h2 { font-size: 16px; font-weight: 600; color: #e4e4e7; }
+  .new-chat-btn {
+    width: 32px; height: 32px; border-radius: 8px; border: none;
+    background: #3b82f6; color: white; font-size: 18px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.2s;
+  }
+  .new-chat-btn:hover { background: #2563eb; }
+  .conv-list { flex: 1; overflow-y: auto; padding: 8px; }
+  .conv-item {
+    padding: 10px 12px; border-radius: 8px; cursor: pointer;
+    margin-bottom: 4px; transition: background 0.15s; font-size: 14px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #a1a1aa;
+  }
+  .conv-item:hover { background: #25252e; }
+  .conv-item.active { background: #2a2a35; color: #e4e4e7; }
+  .main {
+    flex: 1; display: flex; flex-direction: column; min-width: 0;
+  }
+  .chat-header {
+    padding: 16px 24px; border-bottom: 1px solid #2a2a35;
+    font-size: 14px; color: #a1a1aa;
+  }
+  .messages {
+    flex: 1; overflow-y: auto; padding: 24px;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .message {
+    max-width: 80%; padding: 12px 16px; border-radius: 12px;
+    line-height: 1.6; font-size: 14px; animation: fadeIn 0.2s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  .message.user {
+    align-self: flex-end; background: #3b82f6; color: white;
+    border-bottom-right-radius: 4px;
+  }
+  .message.assistant {
+    align-self: flex-start; background: #1e1e28; color: #e4e4e7;
+    border-bottom-left-radius: 4px; border: 1px solid #2a2a35;
+  }
+  .message.streaming { border-left: 2px solid #3b82f6; }
+  .cursor::after {
+    content: "|"; animation: blink 0.8s infinite; color: #3b82f6; margin-left: 2px;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  .input-area {
+    padding: 16px 24px; border-top: 1px solid #2a2a35; background: #0f0f13;
+  }
+  .input-row {
+    display: flex; gap: 8px; align-items: center;
+    background: #1a1a22; border-radius: 12px; padding: 4px;
+    border: 1px solid #2a2a35; transition: border-color 0.2s;
+  }
+  .input-row:focus-within { border-color: #3b82f6; }
+  .input-row input {
+    flex: 1; padding: 10px 12px; border: none; background: transparent;
+    color: #e4e4e7; font-size: 14px; outline: none;
+  }
+  .input-row input::placeholder { color: #52525b; }
+  .send-btn {
+    padding: 8px 16px; border-radius: 8px; border: none;
+    background: #3b82f6; color: white; cursor: pointer; font-size: 14px;
+    transition: background 0.2s; white-space: nowrap;
+  }
+  .send-btn:hover { background: #2563eb; }
+  .send-btn:disabled { background: #27272a; color: #52525b; cursor: not-allowed; }
+  .empty-state {
+    flex: 1; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; color: #52525b; gap: 12px;
+  }
+  .empty-state .icon { font-size: 48px; }
+  .empty-state p { font-size: 14px; }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #2a2a35; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a3a45; }
+  @media (max-width: 640px) {
+    .sidebar { display: none; }
+    .message { max-width: 90%; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <h2>🤖 对话</h2>
+      <button class="new-chat-btn" onclick="newConversation()">+</button>
+    </div>
+    <div class="conv-list" id="convList"></div>
+  </div>
+  <div class="main">
+    <div class="chat-header" id="chatHeader">选择一个对话开始</div>
+    <div class="messages" id="messages">
+      <div class="empty-state">
+        <div class="icon">💬</div>
+        <p>点击左侧 "+" 新建对话</p>
+      </div>
+    </div>
+    <div class="input-area">
+      <div class="input-row">
+        <input id="input" type="text" placeholder="输入消息..." autofocus
+               onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}">
+        <button class="send-btn" id="sendBtn" onclick="send()">发送</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = 'http://localhost:8000';
+let conversations = [];
+let currentId = null;
+let streaming = false;
+
+async function loadConversations() {
+  const res = await fetch(`${API}/conversations?user_id=default_user`);
+  conversations = await res.json();
+  renderConvList();
+}
+
+function renderConvList() {
+  const el = document.getElementById('convList');
+  el.innerHTML = conversations.map(c =>
+    `<div class="conv-item${c.id === currentId ? ' active' : ''}" onclick="switchConv('${c.id}')">${c.title}</div>`
+  ).join('');
+}
+
+async function switchConv(id) {
+  currentId = id;
+  document.getElementById('chatHeader').textContent =
+    conversations.find(c => c.id === id)?.title || '对话';
+  renderConvList();
+  const msgsEl = document.getElementById('messages');
+  msgsEl.innerHTML = '<div style="text-align:center;color:#52525b;padding:20px">加载中...</div>';
+  const res = await fetch(`${API}/conversations/${id}/messages`);
+  const msgs = await res.json();
+  msgsEl.innerHTML = msgs.map(m =>
+    `<div class="message ${m.role}">${escapeHtml(m.content)}</div>`
+  ).join('');
+  msgsEl.scrollTop = msgsEl.scrollHeight;
+}
+
+function newConversation() {
+  currentId = null;
+  document.getElementById('chatHeader').textContent = '新对话';
+  document.getElementById('messages').innerHTML = '';
+  document.getElementById('input').value = '';
+  renderConvList();
+}
+
+async function send() {
+  const input = document.getElementById('input');
+  const msg = input.value.trim();
+  if (!msg || streaming) return;
+  input.value = '';
+
+  const msgsEl = document.getElementById('messages');
+  if (msgsEl.querySelector('.empty-state')) msgsEl.innerHTML = '';
+
+  msgsEl.innerHTML += `<div class="message user">${escapeHtml(msg)}</div>`;
+  msgsEl.scrollTop = msgsEl.scrollHeight;
+
+  const streamItem = document.createElement('div');
+  streamItem.className = 'message assistant streaming cursor';
+  msgsEl.appendChild(streamItem);
+  msgsEl.scrollTop = msgsEl.scrollHeight;
+
+  const btn = document.getElementById('sendBtn');
+  btn.disabled = true; streaming = true;
+
+  let fullReply = '';
+
+  try {
+    const res = await fetch(`${API}/agent/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg, conversation_id: currentId || null })
+    });
+    const data = await res.json();
+    fullReply = data.reply;
+    currentId = data.conversation_id;
+    streamItem.className = 'message assistant';
+    streamItem.innerHTML = escapeHtml(fullReply);
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+    await loadConversations();
+  } catch (e) {
+    streamItem.className = 'message assistant';
+    streamItem.innerHTML = `错误: ${e.message}`;
+  }
+  streamItem.classList.remove('cursor');
+  btn.disabled = false; streaming = false;
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+loadConversations();
+</script>
+</body>
+</html>
