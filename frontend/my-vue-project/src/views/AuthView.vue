@@ -6,7 +6,6 @@ import { apiUrl } from '@/services/api'
 
 const router = useRouter()
 const chatStore = useChatStore()
-const API = import.meta.env.VITE_API_BASE_URL
 
 const isLogin = ref(true)
 const email = ref('')
@@ -46,7 +45,7 @@ async function handleSubmit() {
       body.name = name.value
     }
 
-    const res = await fetch(`${API}/auth/${endpoint}`, {
+    const res = await fetch(apiUrl(`/auth/${endpoint}`), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
