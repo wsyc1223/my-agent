@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.router.agent import router as agent_router
 from src.router.conversation import router as conversation_router
 from src.router.auth import router as auth_router
+from src.router.file import router as file_router
 from fastapi.responses import JSONResponse
 import traceback
 from contextlib import asynccontextmanager
@@ -43,3 +44,4 @@ app.add_middleware(
 app.include_router(agent_router)
 app.include_router(conversation_router)
 app.include_router(auth_router)
+app.include_router(file_router)

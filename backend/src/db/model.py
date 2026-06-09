@@ -61,3 +61,50 @@ class Message(Base):
     embedding = Column(Vector(768), nullable=True)
 
     conversation = relationship("Conversation", back_populates="messages")
+
+class FileDocument(Base):
+    __tablename__ = "file_documents"
+
+    id = Column(UUID, primary_key=True, default=uuid.uuid4)
+    # 强制关联用户 ID， 实现多租户隔离
+    user_id = Column(UUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    filename = Column(String(255), nullable=False)
+    content_type = Column(String(100), nullable=True)
+    size_bytes = Column(BigInteger, nullable=False)
+    sha256 = Column(String(64), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default="indexed")
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    user = relationship("User")
+    # 联级删除：文件删除后，其所有切块自动在数据库里面删除
+    chunks = relationship("FileChunk", back_populates="document", cascade="all, delete-orphan")
+
+class FileChunk(Base):
+    __tablename__ = "file_chunks"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True) 
+    document_id = Column(UUID, ForeignKey("file_documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    chunk_index = Column(BigInteger, nullable=False)
+    content = Column(Text, nullable=False)
+    token_estimate = Column(BigInteger, nullable=False, default=0)
+    embedding = Column(Vector(768), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    document = relationship("FileDocument", back_populates="chunks")
+
+class FileReport(Base):
+    __tablename__ = "file_reports"
+
+    id = Column(UUID, primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    query = Column(Text, nullable=False)
+    status = Column(String(20), nullable=False, default="running") # running, success, error
+    report_md = Column(Text, nullable=True)
+    selected_chunk_ids = Column(JSONB, nullable=True) # 记录引用的 chunk ID 列表， 用于追溯来源
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    user = relationship("User")

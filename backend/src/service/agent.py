@@ -31,12 +31,12 @@ async def chat_stream(message: str, user_id: str, db: AsyncSession, conversation
 
         # 2 把用户的消息转化成为向量存入数据库
         msg = await msg_repo.add(conversation_id, "user", message)
-        msg_emb = embed_text(message)
+        msg_emb = await asyncio.to_thread(embed_text, message)
         await msg_repo.set_embedding(msg.id, msg_emb)
 
         # 3 通过计算向量相似度把相关内容加入到提示词里面
         user_message_content = message
-        hits = await search_messages(db, user_id, message, limit = 5)
+        hits = await search_messages(db, user_id, message, exclude_conversation_id=conversation_id, limit=5)
         if hits:
             ctx = "以下是你与该用户的历史对话，可供参考: \n" + "\n".join(
                 f"- [{h['role']}]: {h['content']}" for h in hits
@@ -81,7 +81,7 @@ async def chat_stream(message: str, user_id: str, db: AsyncSession, conversation
                 rep = await msg_repo.add(conversation_id, "assistant", last_msg.content)
 
             # 7.4 把 AI 的消息计算向量然后存进数据库    
-            rep_emb = embed_text(last_msg.content)
+            rep_emb = await asyncio.to_thread(embed_text, last_msg.content)
             await msg_repo.set_embedding(rep.id, rep_emb)
 
             # 7.5 如果发现有 tools 在图结构里，说明下一步是调工具，则返回给前端 interrupt
@@ -122,10 +122,12 @@ async def resume(thread_id: uuid.UUID, approved: bool, db: AsyncSession, convers
         if not approved:
             state = await app.aget_state(config)
             last_msg = state.values["messages"][-1]
-            tool_call_id = last_msg.tool_calls[0]["id"]
-            resume_input = Command(resume={"messages": [
-                ToolMessage(content="用户拒绝了该工具调用", tool_call_id=tool_call_id)
-            ]})
+            tool_calls = getattr(last_msg, "tool_calls", []) or []
+            tool_message = [
+                ToolMessage(content="用户拒绝了该工具的调用", tool_call_id=tc["id"])
+                for tc in tool_calls
+            ]
+            retume_input = Command(resume={"messages": tool_message})
         else:
             # 3.1 批准工具执行，设置 resume 命令为 continue
             resume_input = Command(resume="continue")
@@ -155,7 +157,7 @@ async def resume(thread_id: uuid.UUID, approved: bool, db: AsyncSession, convers
                 # 7.1 如果是 AI 消息并且带有 tool_calls， 直接加入数据库库然后保存向量
                 if isinstance(msg, AIMessage) and msg.tool_calls:
                     rep = await msg_repo.add(conversation_id, "assistant", msg.content or "", msg.tool_calls)
-                    rep_emb = embed_text(msg.content)
+                    rep_emb = await asyncio.to_thread(embed_text, msg.content)
                     await msg_repo.set_embedding(rep.id, rep_emb)
                 # 7.2 如果是工具消息，直接加入数据库即可
                 elif isinstance(msg, ToolMessage):
@@ -163,7 +165,7 @@ async def resume(thread_id: uuid.UUID, approved: bool, db: AsyncSession, convers
                 # 7.3 如果是纯 AI 消息，直接加入数据库库然后保存向量
                 elif isinstance(msg, AIMessage):
                     rep = await msg_repo.add(conversation_id, "assistant", msg.content)
-                    rep_emb = embed_text(msg.content)
+                    rep_emb = await asyncio.to_thread(embed_text, msg.content)
                     await msg_repo.set_embedding(rep.id, rep_emb)
 
             # 8 如果发现有 tool_calls 在图结构里，返回interrupt给前端
