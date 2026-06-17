@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import ChatSidebar from '@/components/ChatSidebar.vue'
 
+const router = useRouter()
+const currentPath = computed(() => {
+  return router.currentRoute.value ? router.currentRoute.value.path : '/'
+})
 const chat = useChatStore()
 const isDark = ref(localStorage.getItem('theme') === 'dark')
 
@@ -45,7 +50,7 @@ onMounted(() => {
     <!-- 毛玻璃覆盖层 -->
     <div class="app-glass-wrapper">
       <div class="app">
-        <ChatSidebar />
+        <ChatSidebar v-if="currentPath === '/'" />
         <router-view />
       </div>
     </div>
@@ -56,13 +61,13 @@ onMounted(() => {
 /* 引入现代前沿科技字体 */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap');
 
-:root {
+html:not(.dark) {
   /* HSL 调色盘 - 亮色模式 (优雅茶绿与高通透温润奶白底座) */
-  --bg-app: rgba(247, 247, 245, 0.4);         /* 极通透浅磨砂底色，玉石折光感 */
-  --bg-sidebar: hsla(142, 20%, 95%, 0.55);    /* 通透淡奶绿侧边栏 */
-  --bg-card: rgba(255, 255, 255, 0.5);        /* 极浅白色磨砂卡片底色 */
-  --bg-card-hover: rgba(255, 255, 255, 0.85); /* 悬浮白卡片 */
-  --bg-user-msg: hsla(142, 30%, 90%, 0.85);   /* 用户温和鼠尾草浅绿气泡 */
+  --bg-app: rgba(247, 247, 245, 0.75);         /* 极通透浅磨砂底色，玉石折光感 */
+  --bg-sidebar: hsla(142, 20%, 95%, 0.92);    /* 通透淡奶绿侧边栏 */
+  --bg-card: rgba(255, 255, 255, 0.9);        /* 极浅白色磨砂卡片底色 */
+  --bg-card-hover: rgba(255, 255, 255, 0.98); /* 悬浮白卡片 */
+  --bg-user-msg: hsla(142, 30%, 90%, 0.98);   /* 用户温和鼠尾草浅绿气泡 */
   
   --border-color: rgba(0, 0, 0, 0.05);        /* 极精细浅色分割线 */
   --border-glow: hsla(142, 45%, 35%, 0.1);
@@ -77,12 +82,6 @@ onMounted(() => {
   --text-primary: #1f1f21;             /* Claude 经典深炭灰 */
   --text-secondary: #5d5d61;           /* 优雅深灰 */
   --text-muted: #8e8e93;               /* 浅灰 */
-
-  /* 立体拟物光影 (Skeuomorphic & Glass depth in Light Mode) */
-  --radius-sm: 6px;
-  --radius-md: 12px;
-  --radius-lg: 18px;
-  
   /* 柔和的浅色微凸起阴影 */
   --shadow-lift: 0 4px 18px rgba(0, 0, 0, 0.03), 
                  inset 0 1px 0 rgba(255, 255, 255, 0.8);
@@ -92,7 +91,13 @@ onMounted(() => {
   /* 极致立体卡片光影 */
   --shadow-card: 0 10px 30px rgba(0, 0, 0, 0.04),
                  inset 0 1px 0 rgba(255, 255, 255, 0.9);
-                 
+}
+
+:root {
+  /* 全局共有边距与圆角 */
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
   --transition-smooth: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -243,6 +248,7 @@ html.dark .app-glass-wrapper {
 
 .app {
   display: flex; 
+  width: 100%;
   height: 100vh;
   background: transparent;
 }

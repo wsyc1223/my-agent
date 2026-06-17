@@ -1,4 +1,5 @@
 from src.config import settings
+from pydantic import SecretStr
 from langchain_openai import ChatOpenAI
 from langchain_core.runnables import RunnableLambda
 from typing import Annotated, TypedDict
@@ -22,8 +23,8 @@ pool = AsyncConnectionPool(
 )
 
 llm = ChatOpenAI(
-    model = "deepseek-chat",
-    api_key = settings.DEEPSEEK_API_KEY,
+    model = "deepseek-v4-flash",
+    api_key = SecretStr(settings.DEEPSEEK_API_KEY),
     base_url = settings.DEEPSEEK_BASE_URL,
     streaming=True,
 )
@@ -47,15 +48,20 @@ def should_continue(state: State):
         return "tools"
     return END
 
+async def agent_node(state: State):
+    """
+    Agent 决策节点: 调用 LLM 生成下一步动作(或工具调用)
+    """
+    response = await llm_with_tools.ainvoke(state["messages"])
+    return {"messages": [response]}
+
 workflow = StateGraph(State)
-agent_node = RunnableLambda(lambda state: state["messages"]) | llm_with_tools | RunnableLambda(lambda msg: {"messages": [msg]})
 workflow.add_node("agent", agent_node)
 workflow.add_node("tools", tool_node)
 workflow.set_entry_point("agent")
 workflow.add_conditional_edges("agent", should_continue)
 workflow.add_edge("tools", "agent")
 
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 checkpointer = AsyncPostgresSaver(pool)
 app = workflow.compile(checkpointer=checkpointer, interrupt_before=["tools"])
-
-

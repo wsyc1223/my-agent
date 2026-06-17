@@ -39,3 +39,8 @@ class AuthResponse(BaseModel):
     token_type: str
     user_id: UUID
     name: str
+
+class ReportRequest(BaseModel):
+    query: str = Field(..., min_length=2, max_length=2000)
+    file_ids: list[UUID] | None = None
+    session_id: UUID | None = None

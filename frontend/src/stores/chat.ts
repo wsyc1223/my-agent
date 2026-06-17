@@ -26,6 +26,7 @@ export const useChatStore = defineStore('chat', () => {
   const interruptConvId = ref<string | null>(null)
   const approving = ref(false)
   const toolRunning = ref(false) // 当前 Agent 是否在执行后台工具
+  const sidebarCollapsed = ref(false)
 
   // 安全退出登录方法
   function logout() {
@@ -337,6 +338,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     conversations, currentId, messages, streaming, loading, userId, userName,
     interrupted, interruptThreadId, interruptConvId, approving, toolRunning,
+    sidebarCollapsed,
     fetchConversations, fetchMessages, newConversation, send, logout,
     approveTool, rejectTool,
   }

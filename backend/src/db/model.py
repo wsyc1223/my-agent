@@ -49,13 +49,12 @@ class Conversation(Base):
     user = relationship("User", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at")
 
-
 class Message(Base):
     __tablename__ = "messages"
     id = Column(BigInteger, primary_key = True, autoincrement=True)
     conversation_id = Column(UUID, ForeignKey("conversations.id", ondelete="CASCADE"), index=True)
     role = Column(String(16), nullable=False)
-    content = Column(Text, nullable=False)
+    content = Column(Text, nullable=True)
     tool_calls = Column(JSONB, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     embedding = Column(Vector(768), nullable=True)
@@ -74,6 +73,7 @@ class FileDocument(Base):
     sha256 = Column(String(64), nullable=False, index=True)
     status = Column(String(20), nullable=False, default="indexed")
     error_message = Column(Text, nullable=True)
+    full_content = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
     user = relationship("User")
@@ -89,17 +89,48 @@ class FileChunk(Base):
     chunk_index = Column(BigInteger, nullable=False)
     content = Column(Text, nullable=False)
     token_estimate = Column(BigInteger, nullable=False, default=0)
+    start_line = Column(BigInteger, nullable=True)
+    end_line = Column(BigInteger, nullable=True)
     embedding = Column(Vector(768), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
     document = relationship("FileDocument", back_populates="chunks")
 
-class FileReport(Base):
-    __tablename__ = "file_reports"
+class ResearchSession(Base):
+    __tablename__ = "research_sessions"
 
     id = Column(UUID, primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    query = Column(Text, nullable=False)
+    title = Column(String(256), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    user = relationship("User")
+    messages = relationship("ResearchMessage", back_populates="session", cascade="all, delete-orphan", order_by="ResearchMessage.created_at")
+    reports = relationship("FileReport", back_populates="session", cascade="all, delete-orphan")
+
+class ResearchMessage(Base):
+    __tablename__ = "research_messages"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    session_id = Column(UUID, ForeignKey("research_sessions.id", ondelete="CASCADE"), index=True)
+    role = Column(String(16), nullable=False)
+    content = Column(Text, nullable=True)
+    tool_calls = Column(JSONB, nullable=True)
+
+    attached_file_ids = Column(JSONB, nullable=True)
+    generated_report_id = Column(UUID, ForeignKey("file_reports.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    session = relationship("ResearchSession", back_populates="messages")
+    report = relationship("FileReport", back_populates="messages")
+
+class FileReport(Base):
+    __tablename__ = "file_reports"
+    """ 存储用户 ID, """
+    id = Column(UUID, primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    session_id = Column(UUID, ForeignKey("research_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     status = Column(String(20), nullable=False, default="running") # running, success, error
     report_md = Column(Text, nullable=True)
     selected_chunk_ids = Column(JSONB, nullable=True) # 记录引用的 chunk ID 列表， 用于追溯来源
@@ -108,3 +139,5 @@ class FileReport(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     user = relationship("User")
+    session = relationship("ResearchSession", back_populates="reports")
+    messages = relationship("ResearchMessage", back_populates="report")

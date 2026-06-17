@@ -13,7 +13,7 @@ dependencies = [
     "langchain-core>=1.2.26",
     "langchain-openai>=1.1.12",
     "langfuse>=4.6.0",
-    "langgraph>=1.1.6",
+    "langgraph==1.2.4",
     "langgraph-checkpoint-postgres>=3.1.0",
     "nltk>=3.9.4",
     "pgvector>=0.4.2",
@@ -38,4 +38,9 @@ dev = [
     "flake8",
     "pytest",
     "uvicorn[standard]",
+]
+
+[dependency-groups]
+dev = [
+    "pytest-asyncio>=1.4.0",
 ]

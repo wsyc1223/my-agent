@@ -1,3 +1,4 @@
+import uuid
 from fastapi import APIRouter, Depends, UploadFile, BackgroundTasks, HTTPException, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.db.session import get_db
@@ -26,5 +27,26 @@ async def upload_file(
             db=db, 
             background_tasks=background_tasks)
         return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{document_id}")
+async def get_file(
+    document_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    try:
+        from src.db.model import FileDocument
+        doc = await db.get(FileDocument, document_id)
+        if not doc or str(doc.user_id) != str(user.id):
+            raise HTTPException(status_code=404, detail="Document not found")
+        return {
+            "id": str(doc.id),
+            "filename": doc.filename,
+            "full_content": doc.full_content or "",
+            "size_bytes": doc.size_bytes,
+            "status": doc.status
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

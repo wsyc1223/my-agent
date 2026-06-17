@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, nextTick, watch, onMounted } from 'vue'
+import { ref, nextTick, watch, onMounted, computed } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github.css' // 亮色清爽代码主题
 
@@ -10,11 +11,41 @@ const input = ref('')
 const msgEl = ref<HTMLElement | null>(null)
 const textareaEl = ref<HTMLTextAreaElement | null>(null)
 
+const isRightSidebarVisible = ref(true)
+
+const scaleTicks = computed(() => {
+  const turns = []
+  for (let i = 0; i < chat.messages.length; i++) {
+    if (chat.messages[i]?.role === 'user') {
+      turns.push({
+        index: i,
+        userMsg: chat.messages[i]?.content || '...',
+      })
+    }
+  }
+  return turns
+})
+
+function jumpToTurn(index: number) {
+  const elements = msgEl.value?.querySelectorAll('.msg-wrapper')
+  if (elements && elements[index]) {
+    const container = msgEl.value
+    const target = elements[index] as HTMLElement
+    if (container && target) {
+      container.scrollTo({
+        top: target.offsetTop - 16,
+        behavior: 'smooth'
+      })
+    }
+  }
+}
+
 // 渲染 Markdown 的核心计算函数
 function renderMarkdown(content: string) {
   if (!content) return ''
   try {
-    return marked.parse(content) as string
+    const rawHtml = marked.parse(content) as string
+    return DOMPurify.sanitize(rawHtml)
   } catch (e) {
     return content
   }
@@ -146,6 +177,17 @@ onMounted(() => {
     <!-- 极富系统仪式感的顶部 Header -->
     <header class="chat-header">
       <div class="header-left">
+        <!-- 展开左侧栏按钮 (仅在左侧栏折叠时显示) -->
+        <button 
+          v-if="chat.sidebarCollapsed" 
+          class="sidebar-expand-btn-chat" 
+          @click="chat.sidebarCollapsed = false" 
+          title="展开左侧历史边栏"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="9 18 15 12 9 6"/>
+          </svg>
+        </button>
         <span class="thread-status-dot" :class="{ active: chat.streaming }"></span>
         <span class="header-title">
           {{ chat.currentId
@@ -158,11 +200,22 @@ onMounted(() => {
           <span class="spinner"></span>
           Agent 正在决策运行...
         </span>
+        <!-- 展开/折叠右侧栏按钮 -->
+        <button 
+          class="sidebar-toggle-btn-chat" 
+          @click="isRightSidebarVisible = !isRightSidebarVisible"
+          :title="isRightSidebarVisible ? '隐藏右侧观测面板' : '展开右侧观测面板'"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="15" y1="3" x2="15" y2="21"></line>
+          </svg>
+        </button>
       </div>
     </header>
 
     <!-- 响应式多板块 Bento Grid 工作区 -->
-    <div class="workspace-bento">
+    <div class="workspace-bento" :class="{ 'no-right-sidebar': !isRightSidebarVisible }">
       
       <!-- 主聊天对话流交互板块 (中栏) -->
       <div class="chat-area">
@@ -173,22 +226,41 @@ onMounted(() => {
             <span>正在载入操作系统数据栈...</span>
           </div>
           
-          <!-- 欢迎面板 (极高水准 bento 引导卡片) -->
-          <div v-else-if="chat.messages.length === 0" class="welcome-hub-3d">
-            <div class="welcome-logo-3d">⌥</div>
-            <h1 class="welcome-title">Agentic OS</h1>
-            <p class="welcome-subtitle">搭载 LangChain 混合决策链的高级 Operator 人机协作终端</p>
-            
-            <div class="preset-cards-grid">
-              <div class="preset-card" @click="input = '分析当前前端代码的重构亮点，给出专业的建议。'">
-                <span class="card-icon">🎨</span>
-                <h3>UI 极致美学分析</h3>
-                <p>全面评估并获取系统在光影、交互及流光边框上的进化建议</p>
+          <!-- 极致简约的欢迎面板 (仅保留居中输入对话框) -->
+          <div v-else-if="chat.messages.length === 0" class="welcome-hub-minimal">
+            <div class="input-wrapper-3d centered-input-wrapper">
+              <div class="input-row-3d">
+                <textarea
+                  ref="textareaEl"
+                  v-model="input"
+                  rows="1"
+                  placeholder="输入指令以启动会话..."
+                  :disabled="chat.streaming || chat.interrupted"
+                  @keydown="handleKeyDown"
+                />
+                <button 
+                  class="send-btn-3d" 
+                  :disabled="chat.streaming || chat.interrupted || !input.trim()" 
+                  @click="send"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
+                  </svg>
+                </button>
               </div>
-              <div class="preset-card" @click="input = '帮我用 Python 写一个支持多线程的爬虫脚本。'">
-                <span class="card-icon">⚡</span>
-                <h3>极客沙箱代码运行</h3>
-                <p>直接调用安全沙箱运行多线程 Python 代码，呈现完整输出日志</p>
+              <div class="input-footer-bar">
+                <div class="footer-shortcuts">
+                  <span class="shortcut-tag">Enter 发送</span>
+                  <span class="shortcut-tag">Shift + Enter 换行</span>
+                </div>
+                <div class="footer-actions" style="display: flex; gap: 12px; align-items: center;">
+                  <button 
+                    class="btn-deep-research-centered" 
+                    @click="$router.push('/research')"
+                  >
+                    🚀 进入深度研究模式
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -244,8 +316,8 @@ onMounted(() => {
           </div>
         </div>
 
-        <!-- 底部胶囊式立体输入控制台 -->
-        <div class="input-area-3d">
+        <!-- 底部胶囊式立体输入控制台 (仅在有消息时显示在底部) -->
+        <div v-if="chat.messages.length > 0" class="input-area-3d">
           <div class="input-wrapper-3d">
             <div class="input-row-3d">
               <textarea
@@ -271,46 +343,27 @@ onMounted(() => {
                 <span class="shortcut-tag">Enter 发送</span>
                 <span class="shortcut-tag">Shift + Enter 换行</span>
               </div>
-              <div class="node-status-tag">
-                <span class="node-dot"></span>
-                Sandbox Shield Active
+              <div class="footer-actions" style="display: flex; gap: 12px; align-items: center;">
+                <button 
+                  class="btn-deep-research" 
+                  @click="$router.push('/research')"
+                  style="background: rgba(16, 185, 129, 0.1); border: 1px solid var(--primary); color: var(--primary); border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 12px;"
+                >
+                  🚀 进入深度研究模式
+                </button>
+                <div class="node-status-tag">
+                  <span class="node-dot"></span>
+                  Sandbox Shield Active
+                </div>
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Agent 观测状态中心仪表盘 (右侧大屏专属 Bento 格) -->
-      <aside class="observation-center">
-        <!-- 便当格 1: 工具激活箱 -->
-        <div class="bento-card toolbox-card">
-          <h3 class="bento-card-title">🔌 Active Toolbox</h3>
-          <p class="bento-card-subtitle">当前内核已挂载的自主操作工具箱</p>
-          <div class="tools-grid">
-            <div class="tool-item active" title="命令行终端执行工具">
-              <span class="tool-icon">📟</span>
-              <span class="tool-name">Shell Run</span>
-              <span class="tool-status-dot"></span>
-            </div>
-            <div class="tool-item active" title="隔离代码沙箱运行环境">
-              <span class="tool-icon">🐍</span>
-              <span class="tool-name">Py Sandbox</span>
-              <span class="tool-status-dot"></span>
-            </div>
-            <div class="tool-item active" title="联网实时信息检索器">
-              <span class="tool-icon">🌐</span>
-              <span class="tool-name">Web Search</span>
-              <span class="tool-status-dot"></span>
-            </div>
-            <div class="tool-item active" title="本地系统文件管理器">
-              <span class="tool-icon">📁</span>
-              <span class="tool-name">File System</span>
-              <span class="tool-status-dot"></span>
-            </div>
-          </div>
-        </div>
-
-        <!-- 便当格 2: 智能 Agent 状态面板 (浅色简约液态玻璃) -->
+      <!-- Agent 观测状态面板 -->
+      <aside class="observation-center" v-show="isRightSidebarVisible">
+        <!-- 仅保留 智能 Agent 状态面板 -->
         <div class="bento-card console-card" :class="[
           chat.streaming && !chat.toolRunning && !chat.interrupted ? 'b-streaming' : '',
           chat.toolRunning ? 'b-tools' : '',
@@ -325,8 +378,8 @@ onMounted(() => {
           ]"></div>
           <div class="glass-reflection"></div>
           
-          <h3 class="bento-card-title">🤖 Agent Status Engine</h3>
-          <p class="bento-card-subtitle">系统运行状态与 Operator 控制仪表盘</p>
+          <h3 class="bento-card-title">🤖 Agent Status</h3>
+          <p class="bento-card-subtitle">系统当前运行状态</p>
           
           <div class="status-panel-body">
             <!-- 状态 A：思考流式回答中 -->
@@ -335,7 +388,7 @@ onMounted(() => {
                 <span class="pulse-dot dot-green"></span>
                 思考中
               </span>
-              <div class="status-label-b font-dark">AI 正在思考并回答中...</div>
+              <div class="status-label-b font-dark">AI 正在思考并回答...</div>
               <div class="status-sub-b">Streaming Response...</div>
             </div>
 
@@ -345,8 +398,8 @@ onMounted(() => {
                 <span class="pulse-dot dot-blue"></span>
                 调用工具
               </span>
-              <div class="status-label-b font-dark">AI 正在调用工具进行深度检索...</div>
-              <div class="status-sub-b">Executing Tasks & Sandboxes...</div>
+              <div class="status-label-b font-dark">AI 正在调用工具进行检索...</div>
+              <div class="status-sub-b">Executing Tasks...</div>
             </div>
 
             <!-- 状态 C：安全拦截等待确认 -->
@@ -355,8 +408,8 @@ onMounted(() => {
                 <span class="pulse-dot dot-yellow"></span>
                 安全拦截
               </span>
-              <div class="status-label-b font-dark">安全拦截：等待您批准敏感操作...</div>
-              <div class="status-sub-b">Awaiting Operator Approval...</div>
+              <div class="status-label-b font-dark">安全拦截：等待您批准操作...</div>
+              <div class="status-sub-b">Awaiting Approval...</div>
             </div>
 
             <!-- 状态 D：就绪 -->
@@ -365,37 +418,26 @@ onMounted(() => {
                 <span class="dot-static"></span>
                 系统就绪
               </span>
-              <div class="status-label-b font-gray-b">系统就绪，等待您的 Operator 指令</div>
+              <div class="status-label-b font-gray-b">系统就绪，等待您的指令</div>
               <div class="status-sub-b">Kernel Idle & Ready</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 便当格 3: 系统安全仪表盘 -->
-        <div class="bento-card status-card">
-          <h3 class="bento-card-title">🛡️ Node Dashboard</h3>
-          <p class="bento-card-subtitle">节点防御与运行指标参数</p>
-          <div class="status-rows">
-            <div class="status-row">
-              <span class="status-lbl">Shield Node</span>
-              <span class="status-val text-success">L3 Sandbox</span>
-            </div>
-            <div class="status-row">
-              <span class="status-lbl">Approval Guard</span>
-              <span class="status-val text-primary">Active</span>
-            </div>
-            <div class="status-row">
-              <span class="status-lbl">RTT Latency</span>
-              <span class="status-val text-secondary">32ms</span>
-            </div>
-            <div class="status-row">
-              <span class="status-lbl">Kernel Core</span>
-              <span class="status-val text-secondary font-mono">Gemini 3.5</span>
             </div>
           </div>
         </div>
       </aside>
       
+    </div>
+
+    <!-- 刻度跳转栏 -->
+    <div v-if="scaleTicks.length > 0" class="tick-nav-chat" :class="{ 'right-sidebar-visible': isRightSidebarVisible }">
+      <div 
+        v-for="(tick, idx) in scaleTicks" 
+        :key="idx" 
+        class="tick-item-chat"
+        @click="jumpToTurn(tick.index)"
+      >
+        <div class="tick-mark-chat"></div>
+        <div class="tick-tooltip-chat">{{ tick.userMsg.substring(0, 16) }}...</div>
+      </div>
     </div>
   </main>
 </template>
@@ -408,6 +450,7 @@ onMounted(() => {
   min-width: 0; 
   min-height: 0; /* 防止子元素高度撑爆外层 flex 容器，允许其跟随 App 高度收缩 */
   background: transparent; 
+  position: relative;
 }
 
 /* 极致系统级 Header */
@@ -543,100 +586,17 @@ html.dark .messages-container {
   animation: spin 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
 }
 
-/* 3D 欢迎引导控制中心 */
-.welcome-hub-3d {
+/* 极致简约的欢迎引导控制中心 */
+.welcome-hub-minimal {
   flex: 1; 
   display: flex; 
   flex-direction: column; 
   align-items: center;
   justify-content: center; 
-  max-width: 600px;
-  margin: 0 auto;
-  text-align: center;
-  padding-bottom: 40px;
-}
-
-.welcome-logo-3d {
-  font-size: 40px; 
-  color: var(--primary); 
-  width: 72px; height: 72px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  box-shadow: var(--shadow-lift);
-  border-radius: var(--radius-lg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 24px;
-  text-shadow: 0 0 10px var(--primary-glow);
-}
-
-.welcome-title { 
-  font-size: 26px; 
-  font-weight: 700; 
-  color: var(--text-primary); 
-  letter-spacing: -0.5px;
-  margin-bottom: 10px;
-}
-
-.welcome-subtitle { 
-  font-size: 14px; 
-  color: var(--text-secondary); 
-  margin-bottom: 32px;
-  line-height: 1.5;
-}
-
-.preset-cards-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
   width: 100%;
-}
-
-@media (max-width: 600px) {
-  .preset-cards-grid { grid-template-columns: 1fr; }
-}
-
-.preset-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  padding: 20px;
-  text-align: left;
-  cursor: pointer;
-  box-shadow: var(--shadow-lift);
-  transition: var(--transition-smooth);
-}
-
-.preset-card:hover {
-  background: var(--bg-card-hover);
-  border-color: rgba(255, 255, 255, 0.4);
-  box-shadow: var(--shadow-card);
-  transform: translateY(-2px);
-}
-
-html.dark .preset-card:hover {
-  border-color: rgba(255, 255, 255, 0.08);
-  box-shadow: 0 8px 24px rgba(139, 92, 246, 0.15);
-}
-
-.card-icon {
-  font-size: 20px;
-  margin-bottom: 10px;
-  display: block;
-}
-
-.preset-card h3 {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin-bottom: 6px;
-}
-
-.preset-card p {
-  font-size: 12.5px;
-  color: var(--text-secondary);
-  line-height: 1.5;
+  max-width: 640px; /* 限制居中输入框的宽度，展现极致大气 */
+  margin: 0 auto;
+  padding: 0 24px;
 }
 
 /* 消息卡片：Claude 级极致居中与科技宽敞呼吸感 */
@@ -700,10 +660,10 @@ html.dark .msg-wrapper.user .msg-bubble-3d {
 
 /* Claude 式通透无边界 AI 消息卡片 */
 .msg-wrapper.assistant .msg-bubble-3d {
-  background: rgba(255, 255, 255, 0.25); 
+  background: rgba(255, 255, 255, 0.92); 
   color: var(--text-primary);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.01);
-  border: 1px solid rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(0, 0, 0, 0.05);
   border-left: 3px solid var(--primary);
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
   padding: 14px 20px;
@@ -1143,56 +1103,7 @@ html.dark .bento-card:hover {
   margin-bottom: 12px;
 }
 
-/* 卡片 1: 工具激活列表 */
-.tools-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
 
-.tool-item {
-  background: rgba(0, 0, 0, 0.02);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  padding: 8px 4px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  position: relative;
-  transition: var(--transition-smooth);
-}
-
-html.dark .tool-item {
-  background: rgba(255, 255, 255, 0.01);
-}
-
-.tool-item.active {
-  background: rgba(255, 255, 255, 0.8);
-  border-color: rgba(255, 255, 255, 0.9);
-}
-
-html.dark .tool-item.active {
-  background: rgba(255, 255, 255, 0.03);
-  border-color: rgba(255, 255, 255, 0.03);
-}
-
-.tool-item:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-lift);
-}
-
-.tool-icon { font-size: 16px; }
-.tool-name { font-size: 9.5px; font-weight: 600; color: var(--text-secondary); }
-
-.tool-status-dot {
-  position: absolute;
-  top: 6px; right: 6px;
-  width: 4px; height: 4px;
-  background: var(--success);
-  border-radius: 50%;
-  box-shadow: 0 0 6px var(--success);
-}
 
 /* 卡片 2: 智能 Agent 状态仪表盘 (浅色简约液态玻璃) */
 .console-card {
@@ -1359,41 +1270,7 @@ html.dark .tool-item.active {
   50% { opacity: 1; transform: scale(1.15); }
 }
 
-/* 卡片 3: 安全仪表盘 */
-.status-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
 
-.status-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 11px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.02);
-}
-
-html.dark .status-row {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.02);
-}
-
-.status-row:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
-}
-
-.status-lbl {
-  color: var(--text-secondary);
-  font-weight: 500;
-}
-
-.status-val {
-  font-weight: 700;
-}
-
-.text-success { color: #10b981; }
 </style>
 
 <style>
@@ -1515,5 +1392,136 @@ html.dark .markdown-body :not(pre) > code {
   color: #52525b;
   letter-spacing: 0.5px;
   text-transform: uppercase;
+}
+
+/* Sidebar toggle & expand buttons in header */
+.sidebar-expand-btn-chat, .sidebar-toggle-btn-chat {
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition-smooth);
+}
+
+html.dark .sidebar-expand-btn-chat, html.dark .sidebar-toggle-btn-chat {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.sidebar-expand-btn-chat:hover, .sidebar-toggle-btn-chat:hover {
+  color: var(--primary);
+  background: rgba(0, 0, 0, 0.1);
+  transform: scale(1.03);
+}
+
+.sidebar-expand-btn-chat {
+  margin-right: 12px;
+}
+
+/* No Right Sidebar Grid Modifier */
+.workspace-bento.no-right-sidebar {
+  grid-template-columns: 1fr !important;
+}
+
+/* Chat view Scale Ticks Bar */
+.tick-nav-chat {
+  position: absolute;
+  right: 15px; /* when right sidebar is collapsed */
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px; /* 缩紧间距使刻度更为紧凑 */
+  z-index: 99;
+  transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.tick-nav-chat.right-sidebar-visible {
+  right: 295px; /* when right sidebar (observation-center which has width ~280px) is visible */
+}
+
+.tick-item-chat {
+  position: relative;
+  cursor: pointer;
+  padding: 4px 6px; /* 交互热区 padding，鼠标极其容易悬浮触发 */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.tick-mark-chat {
+  width: 6px;
+  height: 6px;
+  background: rgba(100, 100, 100, 0.45); /* 提高亮色下的对比度与可见度 */
+  border-radius: 50%; /* 圆点状 */
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html.dark .tick-mark-chat {
+  background: rgba(255, 255, 255, 0.35); /* 提高暗色模式下的可见度 */
+}
+
+.tick-tooltip-chat {
+  position: absolute;
+  right: 20px; /* 距离圆点稍微向左偏置 */
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--bg-card);
+  backdrop-filter: blur(10px);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 11.5px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  color: #f59e0b;
+  font-weight: 600;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.15);
+}
+
+.tick-item-chat:hover .tick-mark-chat {
+  background: #f59e0b !important;
+  transform: scale(1.35); /* hover 时等比放大圆点 */
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.7) !important;
+}
+
+.tick-item-chat:hover .tick-tooltip-chat {
+  opacity: 1;
+}
+
+.centered-input-wrapper {
+  margin: 24px 0 32px 0;
+  width: 100%;
+}
+
+.btn-deep-research-centered {
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid var(--primary);
+  color: var(--primary);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transition: var(--transition-smooth);
+}
+
+.btn-deep-research-centered:hover {
+  background: var(--primary);
+  color: #fff;
+  box-shadow: 0 0 10px var(--primary-glow);
+}
+
+@media (max-width: 992px) {
+  .tick-nav-chat {
+    right: 15px !important;
+  }
 }
 </style>

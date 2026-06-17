@@ -42,7 +42,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <aside class="sidebar">
+  <aside class="sidebar" :class="{ 'collapsed': chat.sidebarCollapsed }">
     <!-- 头部 LOGO 与 主题/新建 动作控制区 -->
     <div class="header">
       <div class="logo-area">
@@ -70,21 +70,10 @@ onMounted(() => {
             <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
         </button>
-      </div>
-    </div>
-
-    <!-- 拟物式硬件感 User ID 控制面板 -->
-    <div class="user-control-panel">
-      <div class="panel-label">Authorized Node</div>
-      <div class="user-bar-inset" title="当前登录的安全身份节点">
-        <span class="user-label">
-          <span class="pulse-indicator"></span>
-          <span class="user-id-text">{{ userName || '未验证节点' }}</span>
-        </span>
-        <!-- 3D 悬浮退出登录按键 -->
-        <button class="logout-btn" @click="handleLogout" title="退出安全节点">
-          <svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+        <!-- 侧边栏折叠按钮 -->
+        <button class="action-btn collapse-btn" @click="chat.sidebarCollapsed = true" title="隐藏边栏">
+          <svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="15 18 9 12 15 6"/>
           </svg>
         </button>
       </div>
@@ -108,6 +97,31 @@ onMounted(() => {
           <div class="empty-icon">📭</div>
           <span>暂无活动线程</span>
         </div>
+      </div>
+    </div>
+
+    <!-- 底部用户信息与设置面板 -->
+    <div class="user-control-panel-bottom">
+      <div class="user-info-section">
+        <div class="user-avatar-circle">
+          {{ userName.slice(0, 2).toUpperCase() }}
+        </div>
+        <span class="username-label" :title="userName">{{ userName }}</span>
+      </div>
+      <div class="user-actions-section">
+        <!-- 个人信息齿轮按钮 -->
+        <button class="icon-btn-settings" @click="router.push('/profile')" title="用户个人信息">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+        <!-- 退出登录按钮 -->
+        <button class="icon-btn-logout" @click="handleLogout" title="退出安全节点">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+          </svg>
+        </button>
       </div>
     </div>
   </aside>
@@ -227,91 +241,7 @@ html.dark .action-btn:active {
   box-shadow: 0 0 10px rgba(139, 92, 246, 0.2);
 }
 
-.user-control-panel {
-  padding: 12px 18px 16px;
-  border-bottom: 1px solid var(--border-color);
-}
 
-.panel-label {
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 1.2px;
-  margin-bottom: 8px;
-  padding-left: 2px;
-}
-
-.user-bar-inset {
-  background: rgba(0, 0, 0, 0.03);
-  box-shadow: var(--shadow-inset);
-  border: 1px solid rgba(0, 0, 0, 0.02);
-  border-radius: var(--radius-md);
-  padding: 10px 14px;
-  transition: var(--transition-smooth);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-html.dark .user-bar-inset {
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.02);
-}
-
-.user-label {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 80%;
-}
-
-html.dark .user-label {
-  color: var(--text-primary);
-}
-
-.user-id-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pulse-indicator {
-  width: 6px; height: 6px;
-  background: var(--success);
-  border-radius: 50%;
-  box-shadow: 0 0 8px var(--success);
-  animation: pulse-indicator-glow 2s infinite;
-  flex-shrink: 0;
-}
-
-@keyframes pulse-indicator-glow {
-  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
-  70% { box-shadow: 0 0 8px 4px rgba(16, 185, 129, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
-}
-
-.logout-btn {
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 4px;
-  border-radius: var(--radius-sm);
-  transition: var(--transition-smooth);
-}
-
-.logout-btn:hover {
-  color: var(--warning);
-  background: rgba(239, 68, 68, 0.08);
-  transform: scale(1.08);
-}
 
 .list-container {
   flex: 1; 
@@ -409,5 +339,97 @@ html.dark .item-card-3d.active {
 .empty-icon {
   font-size: 24px;
   filter: grayscale(0.5);
+}
+
+/* Sidebar Collapse Transition */
+.sidebar {
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding 0.3s ease, border-color 0.3s ease, opacity 0.3s ease;
+}
+.sidebar.collapsed {
+  width: 0 !important;
+  padding: 0 !important;
+  opacity: 0;
+  overflow: hidden;
+  border-right: none !important;
+}
+
+/* User bottom panel styling */
+.user-control-panel-bottom {
+  padding: 16px;
+  border-top: 1px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.02);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: auto;
+}
+
+html.dark .user-control-panel-bottom {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.user-info-section {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 65%;
+  overflow: hidden;
+}
+
+.user-avatar-circle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--primary) 0%, #a855f7 100%);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.username-label {
+  font-size: 13.5px;
+  color: var(--text-primary);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-actions-section {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.icon-btn-settings, .icon-btn-logout {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition-smooth);
+}
+
+.icon-btn-settings:hover {
+  color: var(--primary);
+  background: rgba(0, 0, 0, 0.05);
+}
+
+html.dark .icon-btn-settings:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.icon-btn-logout:hover {
+  color: var(--warning);
+  background: rgba(239, 68, 68, 0.08);
 }
 </style>

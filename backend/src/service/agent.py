@@ -125,9 +125,9 @@ async def resume(thread_id: uuid.UUID, approved: bool, db: AsyncSession, convers
             tool_calls = getattr(last_msg, "tool_calls", []) or []
             tool_message = [
                 ToolMessage(content="用户拒绝了该工具的调用", tool_call_id=tc["id"])
-                for tc in tool_calls
+                for tc in tool_calls  
             ]
-            retume_input = Command(resume={"messages": tool_message})
+            resume_input = Command(resume={"messages": tool_message})
         else:
             # 3.1 批准工具执行，设置 resume 命令为 continue
             resume_input = Command(resume="continue")

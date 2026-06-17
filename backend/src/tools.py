@@ -3,6 +3,30 @@ from langchain_core.tools import tool
 from datetime import datetime
 from bs4 import BeautifulSoup
 from src.config import settings
+import ipaddress, socket
+from urllib.parse import urlparse
+
+def is_safe_url(url: str) -> bool:
+    # 解析 url
+    parsed = urlparse(url)
+
+    # 限制协议必须是 http 或者是 https
+    # 防范利用 file:// 读取本地文件(如 /etc/passwd) 或 gopher://, ftp://等非安全协议攻击
+    if parsed.scheme not in ("http", "https"):
+        return False
+
+    # 必须包含主机名
+    if not parsed.hostname:
+        return False
+ 
+    try:
+        ip = ipaddress.ip_address(socket.gethostbyname(parsed.hostname))
+    except (socket.gaierror, ValueError):
+        return False
+    if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local:
+        return False
+    return True
+
 
 TAVILY_API_KEY=settings.TAVILY_API_KEY
 
@@ -89,6 +113,8 @@ async def fetch_url(url: str) -> str:
         返回: result(str): 网页的详细内容
     """
     try:
+        if not is_safe_url(url):
+            return f"错误: 安全策略禁止访问该 URL ({url}), 不允许内网地址或非 HTTP 协议"
         async with httpx.AsyncClient() as client:
             resp = await client.get(url, timeout=10.0, headers={
                 "User-Agent": "Mozilla/5.0 (compatible; LangChainBot/1.0)"

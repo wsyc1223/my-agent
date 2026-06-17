@@ -1,0 +1,111 @@
+/* ==========================================================================
+   Design System - Dark Mode & Glassmorphism
+   ========================================================================== */
+
+:root {
+  /* Core Colors (Light mode by default) */
+  --bg-base: #f7f7f5;
+  --bg-glass: rgba(255, 255, 255, 0.6);
+  --bg-glass-hover: rgba(255, 255, 255, 0.7);
+  --border-glass: rgba(0, 0, 0, 0.08);
+  --accent-primary: #10b981; /* Aurora green */
+  --accent-secondary: #3b82f6; /* Cyber blue */
+  --accent-orange: #f59e0b; /* Highlight orange */
+  
+  /* Text Colors */
+  --text-primary: #1f1f21;
+  --text-secondary: #5d5d61;
+  --text-muted: #8e8e93;
+
+  /* Spacing */
+  --gap-base: 16px;
+  --radius-lg: 16px;
+  --radius-md: 12px;
+  --radius-sm: 8px;
+
+  /* Shadows */
+  --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.05);
+}
+
+html.dark {
+  --bg-base: #0f1115; /* Deep dark background */
+  --bg-glass: rgba(30, 33, 40, 0.6); /* Translucent panel */
+  --bg-glass-hover: rgba(45, 50, 60, 0.7);
+  --border-glass: rgba(255, 255, 255, 0.08);
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+body {
+  margin: 0;
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  overflow: hidden; /* Prevent body scroll, handle inside components */
+}
+
+/* Glassmorphism Utilities */
+.glass-card {
+  background: var(--bg-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-glass);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-card:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Animations */
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes pulseGlow {
+  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+  70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+.animate-slide-in {
+  animation: slideInLeft 0.4s ease-out forwards;
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 2s infinite;
+}
+
+/* Highlight Utilities */
+.highlight-match {
+  background-color: rgba(59, 130, 246, 0.3);
+  color: #60a5fa;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+.highlight-active {
+  background-color: rgba(245, 158, 11, 0.4) !important;
+  color: #fbbf24 !important;
+}

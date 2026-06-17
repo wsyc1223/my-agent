@@ -2,7 +2,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, delete, insert
 from sqlalchemy.orm import selectinload
-from src.db.model import Conversation, Message, FileDocument, FileChunk, FileReport
+from src.db.model import Conversation, Message, FileDocument, FileChunk, FileReport, ResearchSession, ResearchMessage
 from sqlalchemy import text
 
 class ConversationRepository:
@@ -96,7 +96,7 @@ class FileDocumentRepository:
         result = await self.session.execute(stmt)
         return result.scalars().first()
 
-    async def create(self, user_id: str, filename: str, size_bytes: int, sha256: str, status: str = "processing") -> FileDocument:
+    async def create(self, user_id: str, filename: str, size_bytes: int, sha256: str, status: str = "processing", full_content: str | None = None) -> FileDocument:
         """
         新建文件记录，默认为 processing（处理中）状态。
         """
@@ -106,7 +106,8 @@ class FileDocumentRepository:
             filename=filename,
             size_bytes=size_bytes,
             sha256=sha256,
-            status=status
+            status=status,
+            full_content=full_content
         )
         self.session.add(doc)
         await self.session.commit()
@@ -139,7 +140,7 @@ class FileDocumentRepository:
     async def delete(self, user_id: str, document_id: uuid.UUID) -> bool:
         """
         删除文件 （因为联级关系， 对应的 file_chunks 会被数据库一同清空）
-        """
+"""
         doc = await self.session.get(FileDocument, document_id)
         # 安全性校验： 必须确保该文件属于当前用户， 防止越权删除别人的文件
         if doc and str(doc.user_id) == str(user_id):
@@ -171,15 +172,73 @@ class FileChunkRepository:
         # 2. 提交事务
         await self.session.commit()
 
+class ResearchSessionRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def create(self, user_id: str | uuid.UUID, title: str | None = None) -> ResearchSession:
+        new_session = ResearchSession(
+            user_id=user_id,
+            title=title
+        )
+        self.session.add(new_session)
+        await self.session.commit()
+        await self.session.refresh(new_session)
+        return new_session
+
+    async def get(self, user_id: str | uuid.UUID, session_id: uuid.UUID) -> ResearchSession | None:
+        res = await self.session.get(ResearchSession, session_id)
+        if res and str(res.user_id) == str(user_id):
+            return res
+        return None
+
+    async def list_by_user(self, user_id: str | uuid.UUID) -> list[ResearchSession]:
+        result = await self.session.execute(
+            select(ResearchSession)
+            .where(ResearchSession.user_id == user_id)
+            .order_by(desc(ResearchSession.updated_at))
+        )
+        return list(result.scalars().all())
+
+class ResearchMessageRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def add(self, session_id: uuid.UUID, role: str, content: str | None,
+                  tool_calls: dict | None = None, attached_file_ids: list | None = None,
+                  generated_report_id: uuid.UUID | None = None) -> ResearchMessage:
+        new_msg = ResearchMessage(
+            session_id=session_id,
+            role=role,
+            content=content,
+            tool_calls=tool_calls,
+            attached_file_ids=attached_file_ids,
+            generated_report_id=generated_report_id
+        )
+        self.session.add(new_msg)
+        await self.session.commit()
+        await self.session.refresh(new_msg)
+        return new_msg
+
+    async def get_history(self, session_id: uuid.UUID) -> list[ResearchMessage]:
+        stmt = (
+                select(ResearchMessage)
+                .where(ResearchMessage.session_id == session_id)
+                .order_by(ResearchMessage.created_at)
+        )
+
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
 class FileReportRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create(self, user_id: str, query: str) -> FileReport:
+    async def create(self, user_id: str, session_id: str) -> FileReport:
         report = FileReport(
             id=uuid.uuid4(),
             user_id=user_id,
-            query=query,
+            session_id=session_id,
             status="running"
         )
         self.session.add(report)
@@ -195,3 +254,12 @@ class FileReportRepository:
             report.selected_chunk_ids = selected_chunk_ids
             report.error_message = error_message
             await self.session.commit()
+
+    async def get_latest_by_session(self, session_id: uuid.UUID) -> FileReport | None:
+        result = await self.session.execute(
+            select(FileReport)
+            .where(FileReport.session_id == session_id)
+            .order_by(desc(FileReport.created_at))
+            .limit(1)
+        )
+        return result.scalars().first()
