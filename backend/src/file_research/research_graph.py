@@ -36,6 +36,7 @@ def merge_files(left: list[str] | None, right: list[str] | None) -> list[str]:
     if not right: right = []
     return list(set(left + right))
 
+# 全局状态
 class ResearchState(TypedDict):
     messages: Annotated[list, add_messages]
     report_md: str
@@ -51,11 +52,13 @@ research_llm = llm.bind_tools(research_tools)
 writer_llm = llm
 
 async def researcher_node(state: ResearchState) -> dict:
+    """ 用户回复用户的消息，但是不会写文件 """
     messages = [SystemMessage(content=RESEARCH_PROMPT)] + state["messages"]
     response = await research_llm.ainvoke(messages)
     return {"messages": [response]}
 
 async def writer_node(state: ResearchState) -> dict:
+    """ 用户写文件，但是不会回复用户的消息 """
     messages = [SystemMessage(content=WRITER_PROMPT)] + state["messages"]
     response = await writer_llm.ainvoke(messages)
     return {"messages": [response]}

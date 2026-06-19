@@ -13,7 +13,7 @@ router = APIRouter()
 @router.post("/agent/chat/stream")
 async def stream(req: ChatRequest, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     try:
-        return await chat_stream(req.message, user.id, db, req.conversation_id)
+        return await chat_stream(message=req.message, user_id=user.id, db=db, conversation_id=req.conversation_id, global_memory=req.global_memory)
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
 

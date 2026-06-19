@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useChatStore } from '@/stores/chat'
 
 const router = useRouter()
+const chatStore = useChatStore()
 
 const userName = ref(localStorage.getItem('userName') || 'yc')
 const userId = ref(localStorage.getItem('userId') || 'NODE-2026-X')
@@ -55,6 +57,24 @@ function handleBack() {
           <div class="detail-item">
             <span class="label">当前环境</span>
             <span class="value">WSL Ubuntu Core</span>
+          </div>
+        </div>
+
+        <div class="stats-section" style="margin-bottom: 32px;">
+          <h4>系统偏好设置</h4>
+          <div class="settings-card">
+            <div class="settings-info">
+              <span class="settings-title">全局记忆功能 (Global Memory)</span>
+              <p class="settings-desc">开启后，后续新建的对话将自动向量检索并参考其他历史会话的记忆片段。</p>
+            </div>
+            <label class="switch">
+              <input 
+                type="checkbox" 
+                :checked="chatStore.globalMemory" 
+                @change="chatStore.setGlobalMemory(($event.target as HTMLInputElement).checked)"
+              >
+              <span class="slider round"></span>
+            </label>
           </div>
         </div>
 
@@ -262,5 +282,104 @@ function handleBack() {
 .stat-lbl {
   font-size: 11px;
   color: var(--text-muted);
+}
+
+.settings-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 16px 20px;
+  border-radius: 12px;
+  margin-top: 8px;
+}
+
+.settings-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 75%;
+}
+
+.settings-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.settings-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* The switch - the box around the slider */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+/* Hide default HTML checkbox */
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+/* The slider */
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  transition: .4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 16px;
+  width: 16px;
+  left: 3px;
+  bottom: 3px;
+  background-color: var(--text-secondary);
+  transition: .4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+input:checked + .slider {
+  background-color: rgba(16, 185, 129, 0.2);
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+html.dark input:checked + .slider {
+  background-color: rgba(139, 92, 246, 0.2);
+  border-color: rgba(139, 92, 246, 0.4);
+}
+
+input:checked + .slider:before {
+  transform: translateX(20px);
+  background-color: var(--accent-primary);
+}
+
+html.dark input:checked + .slider:before {
+  background-color: var(--primary);
+}
+
+/* Rounded sliders */
+.slider.round {
+  border-radius: 24px;
+}
+
+.slider.round:before {
+  border-radius: 50%;
 }
 </style>

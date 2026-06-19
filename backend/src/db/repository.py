@@ -9,11 +9,12 @@ class ConversationRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create(self, user_id: str, title: str | None = None) -> Conversation:
+    async def create(self, user_id: str, title: str | None = None, global_memory: bool = False) -> Conversation:
         conv = Conversation(
             id=uuid.uuid4(),
             user_id=user_id,
-            title=title
+            title=title,
+            global_memory=global_memory
         )
         self.session.add(conv)
         await self.session.commit()

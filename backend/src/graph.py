@@ -48,7 +48,7 @@ def should_continue(state: State):
         return "tools"
     return END
 
-async def agent_node(state: State):
+async def agent_node(state: State) -> State:
     """
     Agent 决策节点: 调用 LLM 生成下一步动作(或工具调用)
     """

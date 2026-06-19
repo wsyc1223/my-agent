@@ -5,6 +5,7 @@ from typing import Optional
 class ChatRequest(BaseModel):
     message: str
     conversation_id: UUID | None
+    global_memory: Optional[bool] = False
 
 class ConversationOut(BaseModel):
     id: str

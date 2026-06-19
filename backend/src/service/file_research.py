@@ -157,6 +157,8 @@ async def stream_research_session(
         attached_file_ids=file_ids_str
     )
 
+    yield f"data: {json.dumps({'type': 'serssion_id', 'session_id': str(session_id)})}\n\n"
+
     # 组装用户输入
     input_state = {
         "messages": [("user", query)],
@@ -164,7 +166,9 @@ async def stream_research_session(
     }
 
     # 传入 session_id 作为 thread_id
-    config = {"configurable": {"thread_id": str(session_id)}}
+    config = {"configurable": {"thread_id": str(session_id),
+                               "document_ids": file_ids_str,
+                               "user_id": user_id}}
     state = await research_app.aget_state(config)
     before_count = len(state.values.get("messages", []))
 

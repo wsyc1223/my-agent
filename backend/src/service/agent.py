@@ -12,7 +12,7 @@ import uuid
 import asyncio
 
 # 流式
-async def chat_stream(message: str, user_id: str, db: AsyncSession, conversation_id: uuid.UUID | None = None):
+async def chat_stream(message: str, user_id: str, db: AsyncSession, global_memory: bool = False, conversation_id: uuid.UUID | None = None):
     async def generator():
         nonlocal conversation_id
         conv_repo = ConversationRepository(db)
@@ -20,13 +20,15 @@ async def chat_stream(message: str, user_id: str, db: AsyncSession, conversation
 
         # 1.1 如果没有会话 id (新会话),则新建一个会话，如果有会话 id，则使用原来的会话
         if conversation_id is None:
-            conv = await conv_repo.create(user_id)
+            conv = await conv_repo.create(user_id=user_id, global_memory=global_memory)
             conversation_id = conv.id
         else:
             conv = await conv_repo.get(user_id, conversation_id)
             if conv is None:
-                conv = await conv_repo.create(user_id)
+                conv = await conv_repo.create(user_id=user_id, global_memory=global_memory)
                 conversation_id = conv.id
+
+        is_global_memory_enabled = conv.global_memory
 
 
         # 2 把用户的消息转化成为向量存入数据库
@@ -36,7 +38,10 @@ async def chat_stream(message: str, user_id: str, db: AsyncSession, conversation
 
         # 3 通过计算向量相似度把相关内容加入到提示词里面
         user_message_content = message
-        hits = await search_messages(db, user_id, message, exclude_conversation_id=conversation_id, limit=5)
+        hits = []
+        if is_global_memory_enabled:
+            hits = await search_messages(db, user_id, message, exclude_conversation_id=conversation_id, limit=5)
+
         if hits:
             ctx = "以下是你与该用户的历史对话，可供参考: \n" + "\n".join(
                 f"- [{h['role']}]: {h['content']}" for h in hits

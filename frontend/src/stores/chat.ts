@@ -27,6 +27,12 @@ export const useChatStore = defineStore('chat', () => {
   const approving = ref(false)
   const toolRunning = ref(false) // 当前 Agent 是否在执行后台工具
   const sidebarCollapsed = ref(false)
+  const globalMemory = ref(localStorage.getItem('globalMemory') === 'true')
+
+  function setGlobalMemory(val: boolean) {
+    globalMemory.value = val
+    localStorage.setItem('globalMemory', String(val))
+  }
 
   // 安全退出登录方法
   function logout() {
@@ -223,7 +229,8 @@ export const useChatStore = defineStore('chat', () => {
         headers: getAuthHeaders(),
         body: JSON.stringify({
           message: text,
-          conversation_id: currentId.value || null
+          conversation_id: currentId.value || null,
+          global_memory: globalMemory.value
         }),
       })
 
@@ -338,8 +345,8 @@ export const useChatStore = defineStore('chat', () => {
   return {
     conversations, currentId, messages, streaming, loading, userId, userName,
     interrupted, interruptThreadId, interruptConvId, approving, toolRunning,
-    sidebarCollapsed,
+    sidebarCollapsed, globalMemory,
     fetchConversations, fetchMessages, newConversation, send, logout,
-    approveTool, rejectTool,
+    approveTool, rejectTool, setGlobalMemory,
   }
 })

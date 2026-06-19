@@ -179,6 +179,9 @@ export const useResearchStore = defineStore('research', () => {
             if (!event || typeof event !== 'object') continue
 
             switch (event.type) {
+              case 'session_id':
+                currentId.value = event.session_id
+                break
               case 'chat':
                 if (event.content) {
                   const msg = messages.value[msgIndex]

@@ -15,6 +15,7 @@ async def upload_file(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    """ 处理文件上传 """
     try:
         # 1. 从 fastapi 接收的文件对象中读取二进制字节流
         file_data = await file.read()
@@ -36,6 +37,7 @@ async def get_file(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
+    """ 获取文件信息 """
     try:
         from src.db.model import FileDocument
         doc = await db.get(FileDocument, document_id)
