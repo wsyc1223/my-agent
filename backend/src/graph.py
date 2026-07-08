@@ -63,5 +63,42 @@ workflow.add_conditional_edges("agent", should_continue)
 workflow.add_edge("tools", "agent")
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-checkpointer = AsyncPostgresSaver(pool)
+from langgraph.checkpoint.postgres.base import BasePostgresSaver
+
+class LazyAsyncPostgresSaver(AsyncPostgresSaver):
+    def __init__(self, conn, pipe=None, serde=None):
+        # 初始化基类的序列化器，防止导入阶段或早期配置访问报错
+        BasePostgresSaver.__init__(self, serde=serde)
+        self.conn_lazy = conn
+        self.pipe_lazy = pipe
+        self.serde_lazy = serde
+        self._initialized = False
+
+    def _ensure_initialized(self):
+        if not self._initialized:
+            # 只有在真正需要执行数据库交互时（此时必然在运行中的事件循环中），才安全地调用父类初始化
+            super().__init__(self.conn_lazy, pipe=self.pipe_lazy, serde=self.serde_lazy)
+            self._initialized = True
+
+    async def get_tuple(self, config):
+        self._ensure_initialized()
+        return await super().get_tuple(config)
+
+    async def list(self, config, *, filter=None, before=None, limit=None):
+        self._ensure_initialized()
+        return await super().list(config, filter=filter, before=before, limit=limit)
+
+    async def put(self, config, checkpoint, metadata, new_versions):
+        self._ensure_initialized()
+        return await super().put(config, checkpoint, metadata, new_versions)
+
+    async def put_writes(self, config, writes, task_id):
+        self._ensure_initialized()
+        return await super().put_writes(config, writes, task_id)
+
+    async def setup(self):
+        self._ensure_initialized()
+        return await super().setup()
+
+checkpointer = LazyAsyncPostgresSaver(pool)
 app = workflow.compile(checkpointer=checkpointer, interrupt_before=["tools"])

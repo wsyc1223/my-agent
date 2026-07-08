@@ -1,4 +1,7 @@
 import uuid
+import os
+from pathlib import Path
+import tempfile
 from fastapi import APIRouter, Depends, UploadFile, BackgroundTasks, HTTPException, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.db.session import get_db
@@ -17,18 +20,40 @@ async def upload_file(
 ):
     """ 处理文件上传 """
     try:
-        # 1. 从 fastapi 接收的文件对象中读取二进制字节流
-        file_data = await file.read()
+        # 新建一个空的临时文件
+        suffix = Path(file.filename).suffix.lower()
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+
+        CHUNK_SIZE = 1024 * 1024
+        total_size = 0
+
+        while True:
+            chunk = await file.read(CHUNK_SIZE)
+
+            if not chunk:
+                break
+
+            total_size += len(chunk)
+            if total_size > 5 * 1024 * 1024:
+                temp_file.close()
+                if os.path.exists(temp_file.name):
+                    os.remove(temp_file.name)
+                raise ValueError("文件大小超过了5M限制")
+
+            temp_file.write(chunk)
+        temp_file.close()
 
         # 2. 转换成为字符串
         res = await handle_file_upload(
             user_id=str(user.id), 
-            filename=file.filename, 
-            file_data=file_data, 
+            filename=file.filename,
+            file_path=temp_file.name, 
             db=db, 
             background_tasks=background_tasks)
         return res
     except Exception as e:
+        if 'temp_file' in locals() and os.path.exists(temp_file.name):
+            os.remove(temp_file.name)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{document_id}")

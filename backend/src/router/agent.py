@@ -26,7 +26,7 @@ async def resume_route(req: ResumeRequest, db: AsyncSession = Depends(get_db), u
         if conv is None:
             raise HTTPException(status_code=404, detail="会话未找到，无权操作此会话")
 
-        return await resume(req.thread_id, req.approved, db, req.conversation_id)
+        return await resume(thread_id=req.thread_id, approved=req.approved, db=db, conversation_id=req.conversation_id, user_id=user.id)
     except HTTPException:
         raise
     except Exception as e:

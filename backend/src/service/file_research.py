@@ -3,7 +3,9 @@ import os
 import hashlib
 import asyncio
 import json
+from src.utils.notifier import notifier_manager
 from langchain_core.messages import AIMessage, ToolMessage, AIMessageChunk
+from src.eval_service.task import evaluate_trace_task
 from fastapi import BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from concurrent.futures import ThreadPoolExecutor
@@ -11,8 +13,10 @@ from src.file_research.parser import decode_text_file, chunk_text, chunk_text_wi
 from src.rag import embed_text
 from src.db.session import AsyncSessionLocal
 from src.schemas import ReportRequest
-from src.db.repository import FileDocumentRepository, FileChunkRepository, FileReportRepository, ResearchSessionRepository, ResearchMessageRepository
+from src.db.repository import FileDocumentRepository, FileChunkRepository, FileReportRepository, MessageRepository, AsyncTaskRepository
+from src.db.model import FileDocument
 from src.file_research.research_graph import research_app
+from src.observability import get_langfuse_handler
 from typing import AsyncGenerator
 
 file_indexing_executor = ThreadPoolExecutor(
@@ -23,7 +27,7 @@ file_indexing_executor = ThreadPoolExecutor(
 async def handle_file_upload(
     user_id: str,
     filename: str,
-    file_data: bytes,
+    file_path,
     db: AsyncSession,
     background_tasks: BackgroundTasks
 ) -> dict:
@@ -31,6 +35,14 @@ async def handle_file_upload(
     第一阶段：API 接收端。用户上传文件时, 快速完成哈希校验和秒传判断，非秒传则开启后台计算并快速返回。
     """
     doc_repo = FileDocumentRepository(db)
+
+    with open(file_path, "rb") as f:
+        file_data = f.read()
+
+    try:
+        os.remove(file_path)
+    except Exception as e:
+        pass
 
     # 1. 计算文件 SHA256 哈希值
     sha256 = hashlib.sha256(file_data).hexdigest()
@@ -46,6 +58,7 @@ async def handle_file_upload(
                 "filename": existing.filename,
                 "message": "秒传成功（已复用历史解析记录）"
             }
+
         elif existing.status == "failed":
             # 上次上传崩溃了，清理掉废弃的记录然后重新上传
             await doc_repo.delete(user_id, existing.id)
@@ -60,7 +73,6 @@ async def handle_file_upload(
         doc.id,
         user_id,
         filename,
-        file_data
     )
 
     return {
@@ -74,7 +86,6 @@ async def process_file_in_background(
     document_id: uuid.UUID,
     user_id: str,
     filename: str, 
-    file_data: bytes
 ):
     """
     第二阶段： 后台静默计算端。 在独立的数据库会话中运行解析、切块、向量计算和批量插入。
@@ -85,11 +96,11 @@ async def process_file_in_background(
         chunk_repo = FileChunkRepository(session)
 
         try:
-            # A. 解码文本文件
-            parsed_file = decode_text_file(filename, file_data)
+            file = await session.get(FileDocument, document_id)
+            file_data = file.full_content
 
             # B. 文本滑动窗口切块
-            chunks = chunk_text_with_line(parsed_file.text)
+            chunks = chunk_text_with_line(file_data)
 
             # C. 批量生成向量
             # 使用 asyncio.gather 和 asyncio.to_thread， 将所有切块并行分发到线程池中计算向量
@@ -125,118 +136,192 @@ async def process_file_in_background(
             traceback.print_exc()
             await doc_repo.update_status(document_id, "failed", error_message=str(e))
 
-async def stream_research_session(
-    user_id: str,
-    session_id: str,
-    db: AsyncSession,
+active_tasks: dict[str, asyncio.Task] = {}
+
+async def run_research_in_background(
     query: str,
-    file_ids: list[uuid.UUID] | None
-) -> AsyncGenerator[str, None]:
-    session_repo = ResearchSessionRepository(db)
-    message_repo = ResearchMessageRepository(db)
-    report_repo = FileReportRepository(db)
+    conversation_id: uuid.UUID,
+    user_id: uuid.UUID
+) -> None:
+    """ 后台静默运行子 Agent 图任务， 并负责状态追踪与防御性状态回收"""
+    async with AsyncSessionLocal() as session:
+        msg_repo = MessageRepository(session) 
+        task_repo = AsyncTaskRepository(session)
+        report_repo = FileReportRepository(session)
 
-    # 检查会话是否存在，否则返回错误或者是新建会话
-    if not session_id:
-        rs = await session_repo.create(user_id=user_id, title=query[:20])
-        session_id = rs.id
-    else:
-        rs = await session_repo.get(user_id=user_id, session_id=session_id)
-        if not rs:
-            yield f"data: {json.dumps({'error': '会话不存在'})}\n\n"
-            return
+        # 获取到当前的最后一条消息的 id, 就是当前任务的回溯消息id
+        latest_msg = await msg_repo.get_latest_user_message(conversation_id=conversation_id)
+        trigger_message_id = latest_msg.id if latest_msg else None
 
-    # 将用户上传的文件 id 转换为 str 格式
-    file_ids_str = [str(id) for id in file_ids] if file_ids else []
-
-    # 将用户的提问添加到数据库
-    await message_repo.add(
-        session_id=session_id,
-        role="user",
-        content=query,
-        attached_file_ids=file_ids_str
-    )
-
-    yield f"data: {json.dumps({'type': 'serssion_id', 'session_id': str(session_id)})}\n\n"
-
-    # 组装用户输入
-    input_state = {
-        "messages": [("user", query)],
-        "file_ids": file_ids_str
-    }
-
-    # 传入 session_id 作为 thread_id
-    config = {"configurable": {"thread_id": str(session_id),
-                               "document_ids": file_ids_str,
-                               "user_id": user_id}}
-    state = await research_app.aget_state(config)
-    before_count = len(state.values.get("messages", []))
-
-    report = await report_repo.create(user_id=user_id, session_id=session_id)
-    final_report_md = ""
-
-    # 调用大模型，实时监听流式输出
-    try:
-        async for msg, metadata in research_app.astream(input_state, config=config, stream_mode="messages"):
-            node_name = metadata.get("langgraph_node", "unknow")
-
-            if msg.content and isinstance(msg, AIMessageChunk):
-                val = msg.content.replace(chr(10), '\\n')
-
-                if node_name == "researcher":
-                    yield f"data: {json.dumps({'type': 'chat', 'content': val})}\n\n"
-                elif node_name == "writer":
-                    yield f"data: {json.dumps({'type': 'report', 'content': val})}\n\n"
-
-            elif hasattr(msg, "tool_calls") and msg.tool_calls:
-                for tool in msg.tool_calls:
-                    yield f"data: {json.dumps({'type': 'tool', 'tool': tool['name']})}\n\n"
-
-        final_state = await research_app.aget_state(config)
-        all_messages = final_state.values.get("messages", [])
-
-        last_msg = all_messages[-1] if all_messages else None
-        if last_msg and getattr(last_msg, "content", None):
-            final_report_md = last_msg.content
-
-        await report_repo.update_report(
-            report_id=report.id,
-            status="success",
-            report_md=final_report_md
+        # 首先创建一个任务存库
+        task = await task_repo.create(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            trigger_message_id=trigger_message_id,
+            task_type="deep_research"
         )
 
-        new_messages = all_messages[before_count:]
-
-        for msg in new_messages:
-            if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
-                await message_repo.add(
-                    session_id=session_id,
-                    role="assistant",
-                    content=msg.content or "",
-                    tool_calls=msg.tool_calls
-                )
-            elif isinstance(msg, ToolMessage):
-                await message_repo.add(
-                    session_id=session_id,
-                    role="tool",
-                    content=msg.content,
-                    tool_calls={"tool_call_id": msg.tool_call_id}
-                )
-            elif isinstance(msg, AIMessage):
-                await message_repo.add(
-                    session_id=session_id,
-                    role="assistant",
-                    content=msg.content,
-                    generated_report_id=report.id
-                )
-        yield f"data: {json.dumps({'status': 'done', 'report_id': str(report.id)})}\n\n"
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        await report_repo.update_report(
-            report_id=report.id,
-            status="error",
-            error_message=str(e)
+        # 存报告入库
+        report = await report_repo.create(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            task_id=task.id,
+            trigger_message_id=trigger_message_id
         )
-        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+        # 记录当前的后台任务 id
+        current_task = asyncio.current_task()
+        active_tasks[str(task.id)] = current_task
+
+        # 组装图状态
+        try:
+            input_state = {
+                "messages": [("user", query)],
+                "file_ids": []
+            }
+
+            # 监测
+            handler = get_langfuse_handler(
+                trace_id=task.id.hex,
+                user_id=str(user_id),
+                tags=["deep_research"]
+            )
+
+            config = {
+                "configurable": {
+                    "thread_id": str(task.id),
+                    "user_id": str(user_id)
+                },
+                "metadata": {
+                    "langfuse_user_id": str(user_id),
+                    "langfuse_tags": ["deep_research"]
+                },
+                "callbacks": [handler]
+            }
+
+            # 调佣深度研究图
+            await research_app.ainvoke(input_state, config=config)
+
+            # 获取图状态
+            final_state = await research_app.aget_state(config)
+            report_md = final_state.values.get("report_md", "")
+
+            # 存库
+            await report_repo.update_report(
+                report_id=report.id,
+                status="success",
+                report_md=report_md
+            )
+
+            # 跟新任务状态
+            await task_repo.update_status(task.id, "success")
+
+            handler.langfuse_client.flush()
+            await evaluate_trace_task.kiq(
+                trace_id=task.id.hex,
+                user_id=str(user_id)
+            )
+
+            new_msg = await msg_repo.add(
+                conversation_id=conversation_id,
+                role="subagent",
+                content="深度研究报告已生成，点击下方卡片查看详情。",
+                referred_message_id=trigger_message_id,
+                associated_task_id=task.id
+            )
+
+            # 向前端发起广播通知
+            await notifier_manager.send_message(
+                conversation_id=str(conversation_id),
+                data={
+                    "type": "subagent_result",
+                    "task": {
+                        "id": str(task.id),
+                        "task_type": "deep_research",
+                        "report_id": str(report.id),
+                        "status": "success"
+                    },
+                    "message": {
+                        "id": new_msg.id,
+                        "role": new_msg.role,
+                        "content": new_msg.content,
+                        "referred_message_id": trigger_message_id,
+                        "associated_task_id": str(task.id)
+                    }
+                }
+            )
+
+        except asyncio.CancelledError:
+            await report_repo.update_report(
+                report_id=report.id,
+                status="error",
+                error_message="用户已取消任务"
+            )
+            await task_repo.update_status(task.id, "stopped", "用户已取消任务")
+
+            stop_msg = await msg_repo.add(
+                conversation_id=conversation_id,
+                role="subagent",
+                content="深度研究任务已经被手动终止",
+                referred_message_id=trigger_message_id,
+                associated_task_id=task.id
+            )
+
+            await notifier_manager.send_message(
+                conversation_id=str(conversation_id),
+                data={
+                    "type": "subagent_result",
+                    "task": {
+                        "id": str(task.id),
+                        "task_type": "deep_research",
+                        "status": "stopped",
+                        "report_id": str(report.id)
+                    },
+                    "message": {
+                        "id": stop_msg.id,
+                        "role": stop_msg.role,
+                        "content": stop_msg.content,
+                        "referred_message_id": trigger_message_id,
+                        "associated_task_id": str(task.id)
+                    }
+                }
+            )
+            raise
+
+        except Exception as e:
+            await report_repo.update_report(
+                report_id=report.id,
+                status="error",
+                error_message=str(e)
+            )
+            await task_repo.update_status(task.id, "failed", str(e))
+            fail_msg = await msg_repo.add(
+                conversation_id=conversation_id,
+                role="subagent",
+                content=f"深度研究任务执行失败: {str(e)}",
+                referred_message_id=trigger_message_id,
+                associated_task_id=task.id
+            )
+
+            await notifier_manager.send_message(
+                conversation_id=str(conversation_id),
+                data={
+                    "type": "subagent_result",
+                    "task": {
+                        "id": str(task.id),
+                        "task_type": "deep_research",
+                        "report_id": str(report.id),
+                        "status": "failed",
+                        "error_message": str(e)
+                    },
+                    "message": {
+                        "id": fail_msg.id,
+                        "role": fail_msg.role,
+                        "content": fail_msg.content,
+                        "referred_message_id": trigger_message_id,
+                        "associated_task_id": str(task.id)
+                    }
+                }
+            )
+        finally:
+            active_tasks.pop(str(task.id), None)

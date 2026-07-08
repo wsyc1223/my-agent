@@ -30,6 +30,9 @@ dependencies = [
     "beautifulsoup4>=4.12.3",
     "pydantic-settings>=2.13.1",
     "python-multipart>=0.0.32",
+    "taskiq>=0.12.4",
+    "taskiq-redis>=1.2.2",
+    "ragas>=0.4.3",
 ]
 
 [project.optional-dependencies]

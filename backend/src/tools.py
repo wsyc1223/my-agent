@@ -1,5 +1,7 @@
 import httpx
+import asyncio
 from langchain_core.tools import tool
+from langchain_core.runnables import RunnableConfig
 from datetime import datetime
 from bs4 import BeautifulSoup
 from src.config import settings
@@ -83,18 +85,21 @@ async def search_web(query: str) -> str:
     """
     tavily_api_key = TAVILY_API_KEY
     async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            "https://api.tavily.com/search",
-            json = {
-                "api_key": tavily_api_key,
-                "query": query,
-                "max_results": 5,
-                "include_answers": True
-            },
-            timeout=10.0
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        try:
+            resp = await client.post(
+                "https://api.tavily.com/search",
+                json = {
+                    "api_key": tavily_api_key,
+                    "query": query,
+                    "max_results": 5,
+                    "include_answers": True
+                },
+                timeout=10.0
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            return f"错误: 搜索引擎暂时不可用(错误详情:{str(e)})"
 
     results = []
     if data.get("answer"):
@@ -137,4 +142,26 @@ async def fetch_url(url: str) -> str:
         return f"无法获取该页面内容（可能有反爬虫保护），建议用 search_web 搜索相关信息"
     return text[:3000]
 
-tools = [get_weather, calculator, search_web, get_current_time, fetch_url]
+@tool
+async def spawn_deep_research(query: str, config: RunnableConfig) -> str:
+    """
+    调用此工具来启动后台的深度检索与报告编写子任务。该任务会异步运行，完成后自动向用户呈送报告。
+
+    参数：
+    query (str): 已经被指代消解后的、具体且明确的研究主题或者是关键词。
+    """
+    from src.service.file_research import run_research_in_background
+
+    configurable = config.get("configurable", {})
+    conversation_id = configurable.get("thread_id")
+    user_id = configurable.get("user_id")
+
+    asyncio.create_task(run_research_in_background(
+        query=query,
+        conversation_id=conversation_id,
+        user_id=user_id
+    ))
+
+    return "已成功为您启动后台深度检索与技术研究任务。系统正在为您检索相关文献与网页、整理情报并撰写详细的技术报告，完成后将在此对话中向您发送报告卡片，请稍候。"
+
+tools = [get_weather, calculator, search_web, get_current_time, fetch_url, spawn_deep_research]

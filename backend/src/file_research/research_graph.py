@@ -23,8 +23,11 @@ research_tools = [
 ]
 tool_node = ToolNode(research_tools)
 
-RESEARCH_PROMPT="""
-    你是一个情报专家，只需要查找资料，不需要写长篇报告，查完就说'交给撰稿人'。
+RESEARCH_PROMPT="""你是一个情报专家，专门负责检索和分析文档与网络信息。
+请通过调用检索工具来收集完整的情报。查完资料后，请在回复中明确说“交给撰稿人”。
+
+【重要指令】:
+在调用 search_document_by_vector 或 search_document_by_grep 工具时，如果用户的提问或当前指令中包含代词（如“它”、“这个文件”、“那个报错”），你必须在调用工具前根据对话上下文进行【指代消解】，将代词还原为具体的主题词、文件名或函数名，再填充进工具的 query 参数中。绝不能直接用代词作为检索 query。
 """
 WRITER_PROMPT="""
     你是一个排版专家，不用查资料，直接看前面的聊天记录，写出一篇精美的 Markdown 报告正文。
@@ -61,7 +64,8 @@ async def writer_node(state: ResearchState) -> dict:
     """ 用户写文件，但是不会回复用户的消息 """
     messages = [SystemMessage(content=WRITER_PROMPT)] + state["messages"]
     response = await writer_llm.ainvoke(messages)
-    return {"messages": [response]}
+    return {"messages": [response],
+            "report_md": response.content}
 
 def should_continue(state: ResearchState) -> str:
     messages = state["messages"]
@@ -72,6 +76,10 @@ def should_continue(state: ResearchState) -> str:
     last_message = state["messages"][-1]
     if hasattr(last_message, "tool_calls") and last_message.tool_calls:
         return "tools"
+
+    # 如果最后一条消息没有触发任何工具调用，且整场会话中从未发生过检索，说明是闲聊，直接体面结束
+    if tool_count == 0:
+        return END
 
     return "writer"
 

@@ -14,6 +14,8 @@ reranker_model_path = os.path.join(os.path.dirname(__file__), "models", "bge-rer
 reranker_model = CrossEncoder(reranker_model_path)
 
 def embed_text(text: str) -> list[float]:
+    if not text or not text.strip():
+        return [0.0] * 768
     return embedding_model.encode(text, normalize_embeddings=True).tolist()
 
 async def search_messages(session: AsyncSession, user_id: str, query: str, exclude_conversation_id = None, limit: int = 5):

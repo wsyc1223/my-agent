@@ -1,7 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import ChatView from '@/views/ChatView.vue'
 import AuthView from '@/views/AuthView.vue'
-import DeepResearchView from '@/views/DeepResearchView.vue'
 import ProfileView from '@/views/ProfileView.vue'
 
 const router = createRouter({
@@ -9,7 +8,7 @@ const router = createRouter({
   routes: [
     { path: '/', name: 'chat', component: ChatView },
     { path: '/login', name: 'login', component: AuthView },
-    { path: '/research', name: 'research', component: DeepResearchView },
+    { path: '/research', redirect: '/' },
     { path: '/profile', name: 'profile', component: ProfileView },
   ],
 })

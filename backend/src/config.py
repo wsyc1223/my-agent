@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     DATABASE_URL: str = Field(..., description="PostgreSQL 异步连接串")
     DATABASE_URL_PSYCOPG: str = Field(..., description="PostgreSQL 传统同步连接串")
 
+    # === 换存 ===
+    REDIS_URL: str = Field("redis://localhost:6379/0", description="Redis 连接地址")
+
     # === 安全配置 ===
     JWT_SECRET_KEY: str = Field(..., description="JWT 加密秘钥")
 

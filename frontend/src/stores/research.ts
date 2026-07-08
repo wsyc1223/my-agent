@@ -3,9 +3,19 @@ import { ref } from 'vue'
 import { apiUrl, getAuthHeaders } from '@/services/api'
 
 export interface ChatMessage {
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'subagent'
   content: string
   files?: { id: string; name: string; type: string }[]
+  referred_message_id?: string | null
+  associated_task_id?: string | null
+  task?: {
+    id: string
+    task_type: string
+    status: string
+    referred_message_id?: number | null
+    report_id?: string | null
+    error_message?: string | null
+  } | null
 }
 
 export const useResearchStore = defineStore('research', () => {
@@ -15,10 +25,13 @@ export const useResearchStore = defineStore('research', () => {
   const streaming = ref(false)
   const toolRunning = ref(false)
   const sessions = ref<any[]>([])
+  
+  // 保存遥测监听的 Reader，以便在切换会话时能安全关闭它
+  let telemetryReader: ReadableStreamDefaultReader<Uint8Array> | null = null
 
   async function fetchSessions() {
     try {
-      const res = await fetch(apiUrl('/research/sessions'), {
+      const res = await fetch(apiUrl('/conversations'), {
         headers: getAuthHeaders(),
       })
       if (res.status === 401) {
@@ -34,7 +47,13 @@ export const useResearchStore = defineStore('research', () => {
 
   async function fetchSessionDetails(id: string) {
     try {
-      const res = await fetch(apiUrl(`/research/sessions/${id}`), {
+      // 停止上一场会话的遥测监听
+      if (telemetryReader) {
+        await telemetryReader.cancel()
+        telemetryReader = null
+      }
+
+      const res = await fetch(apiUrl(`/conversations/${id}/messages`), {
         headers: getAuthHeaders(),
       })
       if (res.status === 401) {
@@ -42,20 +61,49 @@ export const useResearchStore = defineStore('research', () => {
         return
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
-      currentId.value = data.id
-      messages.value = data.messages
-      if (data.report) {
-        reportContent.value = data.report.report_md || ''
-      } else {
-        reportContent.value = ''
+      const messagesData = await res.json()
+      
+      currentId.value = id
+      messages.value = messagesData
+
+      // 尝试获取当前会话下的最后一份报告内容
+      reportContent.value = ''
+      const subagentMsgs = messagesData.filter((m: any) => m.role === 'subagent' && m.task?.report_id)
+      if (subagentMsgs.length > 0) {
+        const lastTaskMsg = subagentMsgs[subagentMsgs.length - 1]
+        if (lastTaskMsg.task?.report_id) {
+          await fetchReportDetail(lastTaskMsg.task.report_id)
+        }
       }
+
+      // 开启遥测通道监听
+      listenTelemetry(id)
     } catch (e) {
       console.error('[fetchSessionDetails] error:', e)
     }
   }
 
+  async function fetchReportDetail(reportId: string) {
+    try {
+      const res = await fetch(apiUrl(`/reports/${reportId}`), {
+        headers: getAuthHeaders(),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data && data.report_md) {
+          reportContent.value = data.report_md
+        }
+      }
+    } catch (e) {
+      console.error('[fetchReportDetail] 错误:', e)
+    }
+  }
+
   function newSession() {
+    if (telemetryReader) {
+      telemetryReader.cancel()
+      telemetryReader = null
+    }
     currentId.value = null
     messages.value = []
     reportContent.value = ''
@@ -64,7 +112,6 @@ export const useResearchStore = defineStore('research', () => {
   async function send(text: string, attachedFiles?: { id: string; name: string; type: string }[]) {
     if (!text.trim() || streaming.value) return
 
-    const fileIds = attachedFiles ? attachedFiles.map(f => f.id) : null;
     messages.value.push({
       role: 'user',
       content: text,
@@ -77,27 +124,32 @@ export const useResearchStore = defineStore('research', () => {
     const msgIndex = messages.value.length - 1
 
     try {
-      const res = await fetch(apiUrl('/reports/stream'), {
+      const res = await fetch(apiUrl('/agent/chat/stream'), {
         method: 'POST',
-        headers: getAuthHeaders(),
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders()
+        },
         body: JSON.stringify({
-          query: text,
-          file_ids: fileIds,
-          session_id: currentId.value || null
+          message: text,
+          conversation_id: currentId.value || null,
+          global_memory: false
         }),
       })
 
       if (res.status === 401) {
-        // Token 过期，直接踢回登录页，实际可以调用 logout
         window.location.href = '/login'
         return
       }
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
-      await readDualStream(res, msgIndex)
-      // 发送成功后刷新会话列表，获取可能新生成的会话 ID/标题
+      await readStream(res, msgIndex)
       await fetchSessions()
+      
+      if (currentId.value) {
+        listenTelemetry(currentId.value)
+      }
     } catch (e: any) {
       console.error('[send research] 异常:', e)
       const msg = messages.value[msgIndex]
@@ -108,18 +160,15 @@ export const useResearchStore = defineStore('research', () => {
     }
   }
 
-  async function readDualStream(res: Response, msgIndex: number) {
+  async function readStream(res: Response, msgIndex: number) {
     if (!res.body) return
     const reader = res.body.getReader()
     const decoder = new TextDecoder('utf-8')
     let buffer = ''
     
-    // 用于打字机效果的变量
     let pendingChat = ''
     let animatingChat = false
-    
-    let pendingReport = ''
-    let animatingReport = false
+    let hasTextStarted = false
 
     function tickChat() {
       if (!pendingChat) {
@@ -135,29 +184,11 @@ export const useResearchStore = defineStore('research', () => {
       requestAnimationFrame(tickChat)
     }
 
-    function tickReport() {
-      if (!pendingReport) {
-        animatingReport = false
-        return
-      }
-      reportContent.value += pendingReport[0]
-      pendingReport = pendingReport.slice(1)
-      requestAnimationFrame(tickReport)
-    }
-
     function pushChat(text: string) {
       pendingChat += text
       if (!animatingChat) {
         animatingChat = true
         tickChat()
-      }
-    }
-
-    function pushReport(text: string) {
-      pendingReport += text
-      if (!animatingReport) {
-        animatingReport = true
-        tickReport()
       }
     }
 
@@ -179,61 +210,116 @@ export const useResearchStore = defineStore('research', () => {
             if (!event || typeof event !== 'object') continue
 
             switch (event.type) {
-              case 'session_id':
-                currentId.value = event.session_id
+              case 'conversation_id':
+                currentId.value = event.conversation_id
                 break
-              case 'chat':
+              case 'text':
                 if (event.content) {
                   const msg = messages.value[msgIndex]
-                  if (msg && msg.content.startsWith('⚙️')) {
-                    msg.content = '' // 清除工具调用的提示文字
+                  if (!hasTextStarted) {
+                    hasTextStarted = true
+                    toolRunning.value = false
+                    if (msg && msg.content.startsWith('⚙️')) {
+                      msg.content = ''
+                      messages.value = [...messages.value]
+                    }
                   }
-                  toolRunning.value = false
                   pushChat(event.content.replace(/\\n/g, '\n'))
                 }
                 break
-              case 'report':
-                if (event.content) {
-                  pushReport(event.content.replace(/\\n/g, '\n'))
-                }
-                break
-              case 'tool':
+              case 'tool_run':
                 toolRunning.value = true
                 const toolMsg = messages.value[msgIndex]
                 if (toolMsg) {
-                  toolMsg.content = `⚙️ **[Operator System]** AI 正在执行深度检索工具: \`${event.tool}\` ...\n\n`
+                  const displayNames = event.tool_names ? event.tool_names.join(', ') : 'tool'
+                  toolMsg.content = `⚙️ **[Operator System]** AI 正在执行深度检索工具: \`${displayNames}\` ...\n\n`
                   messages.value = [...messages.value]
                 }
                 break
               case 'error':
-                console.error('[readDualStream] Error:', event.error)
+                console.error('[readStream] Error:', event.message)
                 break
             }
-            
-            // 针对最后一条 status: done 消息
-            if (event.status === 'done') {
-              console.log('Stream done, report_id:', event.report_id)
-              // 自动切换为当前的 session_id
-              if (event.report_id) {
-                // 如果当前没有 session_id，我们可以从数据库拿或者流输出中有，其实后端已经在创建时分配了
-                // 为简便起见，当 stream done 后 fetchSessions 可以拿到最新的 id
-              }
-            }
           } catch (err) {
-            // 解析失败（可能切片不完整），忽略继续
+            // ignore
           }
         }
       }
     } finally {
       toolRunning.value = false
     }
+  }
 
-    // 尾部剩余的 buffer 处理
-    if (buffer.startsWith('data: ')) {
-      try {
-        const event = JSON.parse(buffer.slice(6))
-        if (event.status === 'done') console.log('Final done.')
-      } catch (e) {}
+  async function listenTelemetry(conversationId: string) {
+    if (telemetryReader) {
+      await telemetryReader.cancel()
+      telemetryReader = null
+    }
+
+    try {
+      const res = await fetch(apiUrl(`/conversations/${conversationId}/telemetry`), {
+        headers: getAuthHeaders()
+      })
+      if (!res.ok) throw new Error(`Telemetry HTTP ${res.status}`)
+      if (!res.body) return
+
+      telemetryReader = res.body.getReader()
+      const decoder = new TextDecoder('utf-8')
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await telemetryReader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const payload = line.slice(6)
+
+          try {
+            const event = JSON.parse(payload)
+            if (!event || typeof event !== 'object') continue
+
+            console.log('[Telemetry Event]', event)
+
+            if (event.type === 'subagent_result') {
+              const taskData = event.task
+              const taskMsg = event.message
+
+              const existIdx = messages.value.findIndex(m => m.associated_task_id === taskData.id)
+              if (existIdx !== -1) {
+                messages.value[existIdx] = {
+                  role: 'subagent',
+                  content: taskMsg.content,
+                  referred_message_id: taskMsg.referred_message_id,
+                  associated_task_id: taskData.id,
+                  task: taskData
+                }
+              } else {
+                messages.value.push({
+                  role: 'subagent',
+                  content: taskMsg.content,
+                  referred_message_id: taskMsg.referred_message_id,
+                  associated_task_id: taskData.id,
+                  task: taskData
+                })
+              }
+              messages.value = [...messages.value]
+
+              if (taskData.status === 'success' && taskData.report_id) {
+                await fetchReportDetail(taskData.report_id)
+              }
+            }
+          } catch (e) {
+            // ignore
+          }
+        }
+      }
+    } catch (e: any) {
+      console.log('[listenTelemetry] 长连接断开或被用户手动取消:', e.message)
     }
   }
 

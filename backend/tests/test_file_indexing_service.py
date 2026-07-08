@@ -42,7 +42,7 @@ async def test_process_file_in_background_saving_lines(db_session):
         yield db_session
 
     with patch("src.service.file_research.AsyncSessionLocal", mock_session_local):
-        await process_file_in_background(doc.id, user_id, filename, content)
+        await process_file_in_background(doc.id, user_id, filename)
 
     # 3. 校验文档状态：验证是否成功变更为 indexed，且 full_content 是否被保存
     updated_doc = await db_session.get(type(doc), doc.id)

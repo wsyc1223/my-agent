@@ -9,8 +9,18 @@ export interface Conversation {
 }
 
 export interface ChatMessage {
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'subagent'
   content: string
+  referred_message_id?: string | null
+  associated_task_id?: string | null
+  task?: {
+    id: string
+    task_type: string
+    status: string
+    referred_message_id?: number | null
+    report_id?: string | null
+    error_message?: string | null
+  } | null
 }
 
 export const useChatStore = defineStore('chat', () => {
@@ -25,17 +35,26 @@ export const useChatStore = defineStore('chat', () => {
   const interruptThreadId = ref<string | null>(null)
   const interruptConvId = ref<string | null>(null)
   const approving = ref(false)
-  const toolRunning = ref(false) // 当前 Agent 是否在执行后台工具
+  const toolRunning = ref(false)
   const sidebarCollapsed = ref(false)
   const globalMemory = ref(localStorage.getItem('globalMemory') === 'true')
+  
+  // 深度研究的报告正文
+  const reportContent = ref('')
+  
+  // 遥测接口监听的 Reader 句柄，防范多开连接
+  let telemetryReader: ReadableStreamDefaultReader<Uint8Array> | null = null
 
   function setGlobalMemory(val: boolean) {
     globalMemory.value = val
     localStorage.setItem('globalMemory', String(val))
   }
 
-  // 安全退出登录方法
   function logout() {
+    if (telemetryReader) {
+      telemetryReader.cancel()
+      telemetryReader = null
+    }
     localStorage.removeItem('token')
     localStorage.removeItem('userName')
     localStorage.removeItem('userId')
@@ -44,6 +63,7 @@ export const useChatStore = defineStore('chat', () => {
     conversations.value = []
     messages.value = []
     currentId.value = null
+    reportContent.value = ''
   }
 
   async function fetchConversations() {
@@ -67,6 +87,13 @@ export const useChatStore = defineStore('chat', () => {
   async function fetchMessages(id: string) {
     currentId.value = id
     loading.value = true
+    
+    // 关闭上一场的遥测
+    if (telemetryReader) {
+      await telemetryReader.cancel()
+      telemetryReader = null
+    }
+
     try {
       const res = await fetch(apiUrl(`/conversations/${id}/messages`), {
         headers: getAuthHeaders()
@@ -76,7 +103,21 @@ export const useChatStore = defineStore('chat', () => {
         loading.value = false
         return
       }
-      messages.value = await res.json()
+      const data = await res.json()
+      messages.value = data
+
+      // 自动提取历史里最后生成的报告进行右侧加载呈现
+      reportContent.value = ''
+      const subagentMsgs = data.filter((m: any) => m.role === 'subagent' && m.task?.report_id)
+      if (subagentMsgs.length > 0) {
+        const lastMsg = subagentMsgs[subagentMsgs.length - 1]
+        if (lastMsg.task?.report_id) {
+          await fetchReportDetail(lastMsg.task.report_id)
+        }
+      }
+
+      // 开启新会话的遥测长连接
+      listenTelemetry(id)
     } catch (e) {
       console.error('[fetchMessages] 异常:', e)
     } finally {
@@ -84,20 +125,40 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  async function fetchReportDetail(reportId: string) {
+    try {
+      const res = await fetch(apiUrl(`/reports/${reportId}`), {
+        headers: getAuthHeaders(),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data && data.report_md) {
+          reportContent.value = data.report_md
+        }
+      }
+    } catch (e) {
+      console.error('[fetchReportDetail] 获取报告失败:', e)
+    }
+  }
+
   function newConversation() {
+    if (telemetryReader) {
+      telemetryReader.cancel()
+      telemetryReader = null
+    }
     currentId.value = null
     messages.value = []
+    reportContent.value = ''
   }
 
   async function readStream(res: Response, msgIndex: number) {
-    console.log(`[readStream] 开始读取统一标准化 JSON 数据流，目标消息索引: ${msgIndex}`);
     const reader = res.body!.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
 
     let pending = ''
     let animating = false
-    let hasTextStarted = false // 标记大模型是否已经真正开始吐字正文
+    let hasTextStarted = false
 
     function flush() {
       if (animating || !pending) return
@@ -110,7 +171,6 @@ export const useChatStore = defineStore('chat', () => {
         const msg = messages.value[msgIndex]
         if (msg) {
           msg.content += pending[0]
-          // 强制触发 Vue 3 响应式数组更新
           messages.value = [...messages.value]
         }
         pending = pending.slice(1)
@@ -141,8 +201,6 @@ export const useChatStore = defineStore('chat', () => {
             const event = JSON.parse(payload)
             if (!event || typeof event !== 'object') continue
 
-            console.log('[readStream] 捕获标准化事件:', event.type);
-
             switch (event.type) {
               case 'conversation_id':
                 currentId.value = event.conversation_id
@@ -171,27 +229,22 @@ export const useChatStore = defineStore('chat', () => {
                 }
                 break
               case 'interrupt':
-                console.log('[readStream] 拦截到高权限中断请求，挂起流并开启审批');
                 interrupted.value = true
                 toolRunning.value = false
                 interruptThreadId.value = event.thread_id
                 interruptConvId.value = event.conversation_id
                 return
               case 'done':
-                console.log('[readStream] 收到统一流结束信号 done');
                 toolRunning.value = false
                 break
               case 'error':
-                console.error('[readStream] 收到后端异常信令:', event.message);
                 toolRunning.value = false
                 const errMsg = messages.value[msgIndex]
                 if (errMsg) errMsg.content = `错误: ${event.message}`
                 break
-              default:
-                console.warn('[readStream] 收到未定义类型的事件信令:', event.type)
             }
           } catch (err) {
-            console.error('[readStream] JSON 信令解析失败，payload:', payload, '错误:', err)
+            // ignore
           }
         }
       }
@@ -206,9 +259,7 @@ export const useChatStore = defineStore('chat', () => {
         if (event && typeof event === 'object' && event.type === 'conversation_id') {
           currentId.value = event.conversation_id
         }
-      } catch (err) {
-        console.error('[readStream] 尾部缓冲区解析失败:', err)
-      }
+      } catch (err) {}
     }
   }
 
@@ -243,8 +294,12 @@ export const useChatStore = defineStore('chat', () => {
 
       await readStream(res, msgIndex)
       await fetchConversations()
+
+      if (currentId.value) {
+        listenTelemetry(currentId.value)
+      }
     } catch (e: any) {
-      console.error('[send] 异常:', e);
+      console.error('[send] 异常:', e)
       const msg = messages.value[msgIndex]
       if (msg) msg.content = `错误: ${e.message}`
       toolRunning.value = false
@@ -254,9 +309,79 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  async function listenTelemetry(conversationId: string) {
+    if (telemetryReader) {
+      await telemetryReader.cancel()
+      telemetryReader = null
+    }
+
+    try {
+      const res = await fetch(apiUrl(`/conversations/${conversationId}/telemetry`), {
+        headers: getAuthHeaders()
+      })
+      if (!res.ok) throw new Error(`Telemetry HTTP ${res.status}`)
+      if (!res.body) return
+
+      telemetryReader = res.body.getReader()
+      const decoder = new TextDecoder('utf-8')
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await telemetryReader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const payload = line.slice(6)
+
+          try {
+            const event = JSON.parse(payload)
+            if (!event || typeof event !== 'object') continue
+
+            console.log('[Chat Telemetry Event]', event)
+
+            if (event.type === 'subagent_result') {
+              const taskData = event.task
+              const taskMsg = event.message
+
+              const existIdx = messages.value.findIndex(m => m.associated_task_id === taskData.id)
+              if (existIdx !== -1) {
+                messages.value[existIdx] = {
+                  role: 'subagent',
+                  content: taskMsg.content,
+                  referred_message_id: taskMsg.referred_message_id,
+                  associated_task_id: taskData.id,
+                  task: taskData
+                }
+              } else {
+                messages.value.push({
+                  role: 'subagent',
+                  content: taskMsg.content,
+                  referred_message_id: taskMsg.referred_message_id,
+                  associated_task_id: taskData.id,
+                  task: taskData
+                })
+              }
+              messages.value = [...messages.value]
+
+              if (taskData.status === 'success' && taskData.report_id) {
+                await fetchReportDetail(taskData.report_id)
+              }
+            }
+          } catch (e) {}
+        }
+      }
+    } catch (e: any) {
+      console.log('[listenTelemetry] 断开或取消:', e.message)
+    }
+  }
+
   async function approveTool() {
     if (!interruptThreadId.value) return
-    console.log(`[approveTool] 批准工具运行，thread_id: ${interruptThreadId.value}`);
     approving.value = true
     interrupted.value = false
     toolRunning.value = true
@@ -289,7 +414,7 @@ export const useChatStore = defineStore('chat', () => {
       await readStream(res, msgIndex)
       await fetchConversations()
     } catch (e: any) {
-      console.error('[approveTool] 异常:', e);
+      console.error('[approveTool] 异常:', e)
       const msg = messages.value[msgIndex]
       if (msg) msg.content = `错误: ${e.message}`
       toolRunning.value = false
@@ -302,7 +427,6 @@ export const useChatStore = defineStore('chat', () => {
 
   async function rejectTool() {
     if (!interruptThreadId.value) return
-    console.log(`[rejectTool] 拒绝工具运行，thread_id: ${interruptThreadId.value}`);
     approving.value = true
     interrupted.value = false
     toolRunning.value = false
@@ -332,7 +456,7 @@ export const useChatStore = defineStore('chat', () => {
       await readStream(res, msgIndex)
       await fetchConversations()
     } catch (e: any) {
-      console.error('[rejectTool] 异常:', e);
+      console.error('[rejectTool] 异常:', e)
       const msg = messages.value[msgIndex]
       if (msg) msg.content = `错误: ${e.message}`
     } finally {
@@ -345,8 +469,8 @@ export const useChatStore = defineStore('chat', () => {
   return {
     conversations, currentId, messages, streaming, loading, userId, userName,
     interrupted, interruptThreadId, interruptConvId, approving, toolRunning,
-    sidebarCollapsed, globalMemory,
+    sidebarCollapsed, globalMemory, reportContent,
     fetchConversations, fetchMessages, newConversation, send, logout,
-    approveTool, rejectTool, setGlobalMemory,
+    approveTool, rejectTool, setGlobalMemory, fetchReportDetail
   }
 })

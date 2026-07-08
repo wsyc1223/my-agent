@@ -1,8 +1,9 @@
 import uuid
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, delete, insert
 from sqlalchemy.orm import selectinload
-from src.db.model import Conversation, Message, FileDocument, FileChunk, FileReport, ResearchSession, ResearchMessage
+from src.db.model import Conversation, Message, FileDocument, FileChunk, FileReport, AsyncTask
 from sqlalchemy import text
 
 class ConversationRepository:
@@ -42,43 +43,79 @@ class ConversationRepository:
             conv.title = title
             await self.session.commit()
 
+    async def delete(self, user_id: str | uuid.UUID, conversation_id: uuid.UUID) -> bool:
+        conv = await self.session.get(Conversation, conversation_id)
+        if conv and str(conv.user_id) == str(user_id):
+            await self.session.execute(
+                delete(FileReport)
+                .where(FileReport.conversation_id == conversation_id)
+                .where(FileReport.is_saved == False)
+            )
+            await self.session.delete(conv)
+            await self.session.commit()
+            return True
+        return False
 
 class MessageRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def add(self, conversation_id: uuid.UUID, role: str, content: str, tool_calls: dict | None = None) -> Message:
+    # 新增消息记录
+    async def add(self, conversation_id: uuid.UUID,
+                  role: str,
+                  content: str,
+                  tool_calls: dict | None = None,
+                  referred_message_id: int | None = None,
+                  associated_task_id: uuid.UUID | None = None) -> Message:
         msg = Message(
             conversation_id=conversation_id,
             role=role,
             content=content,
             tool_calls=tool_calls,
+            referred_message_id=referred_message_id,
+            associated_task_id=associated_task_id
         )
         self.session.add(msg)
         await self.session.commit()
         await self.session.refresh(msg)
         return msg
 
+    # 获取消息历史
     async def get_history(self, conversation_id: uuid.UUID) -> list[Message]:
         result = await self.session.execute(
             select(Message)
             .where(Message.conversation_id == conversation_id)
+            .options(selectinload(Message.associated_task).selectinload(AsyncTask.file_report))
             .order_by(Message.created_at)
         )
         return list(result.scalars().all())
 
     async def count(self, conversation_id: uuid.UUID) -> int:
         result = await self.session.execute(
-            select(Message).where(Message.conversation_id == conversation_id)
+            select(func.count(Message.id)).where(Message.conversation_id == conversation_id)
         )
-        return len(list(result.scalars().all()))
-    
+        return result.scalar_one()
+ 
     async def set_embedding(self, message_id: int, embedding: list[float]) -> None:
         await self.session.execute(
             text("UPDATE messages SET embedding = cast(:emb as vector) WHERE id = :mid"),
             {"emb": str(embedding), "mid": message_id}
         )
         await self.session.commit()
+
+    async def get_latest_user_message(self, conversation_id: uuid.UUID) -> Message | None:
+        """
+        极速获取当前会话中，用户发送的最新一条消息(O(1)索引检索，不加载历史)
+        """
+        stmt = (
+            select(Message)
+            .where(Message.conversation_id == conversation_id)
+            .where(Message.role == "user")
+            .order_by(desc(Message.id))
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().first()
 
 class FileDocumentRepository:
     def __init__(self, session: AsyncSession):
@@ -173,73 +210,76 @@ class FileChunkRepository:
         # 2. 提交事务
         await self.session.commit()
 
-class ResearchSessionRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
+# class ResearchSessionRepository:
+#     def __init__(self, session: AsyncSession):
+#         self.session = session
+#
+#     async def create(self, user_id: str | uuid.UUID, title: str | None = None) -> ResearchSession:
+#         new_session = ResearchSession(
+#             user_id=user_id,
+#             title=title
+#         )
+#         self.session.add(new_session)
+#         await self.session.commit()
+#         await self.session.refresh(new_session)
+#         return new_session
+#
+#     async def get(self, user_id: str | uuid.UUID, session_id: uuid.UUID) -> ResearchSession | None:
+#         res = await self.session.get(ResearchSession, session_id)
+#         if res and str(res.user_id) == str(user_id):
+#             return res
+#         return None
+#
+#     async def list_by_user(self, user_id: str | uuid.UUID) -> list[ResearchSession]:
+#         result = await self.session.execute(
+#             select(ResearchSession)
+#             .where(ResearchSession.user_id == user_id)
+#             .order_by(desc(ResearchSession.updated_at))
+#         )
+#         return list(result.scalars().all())
 
-    async def create(self, user_id: str | uuid.UUID, title: str | None = None) -> ResearchSession:
-        new_session = ResearchSession(
-            user_id=user_id,
-            title=title
-        )
-        self.session.add(new_session)
-        await self.session.commit()
-        await self.session.refresh(new_session)
-        return new_session
-
-    async def get(self, user_id: str | uuid.UUID, session_id: uuid.UUID) -> ResearchSession | None:
-        res = await self.session.get(ResearchSession, session_id)
-        if res and str(res.user_id) == str(user_id):
-            return res
-        return None
-
-    async def list_by_user(self, user_id: str | uuid.UUID) -> list[ResearchSession]:
-        result = await self.session.execute(
-            select(ResearchSession)
-            .where(ResearchSession.user_id == user_id)
-            .order_by(desc(ResearchSession.updated_at))
-        )
-        return list(result.scalars().all())
-
-class ResearchMessageRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
-
-    async def add(self, session_id: uuid.UUID, role: str, content: str | None,
-                  tool_calls: dict | None = None, attached_file_ids: list | None = None,
-                  generated_report_id: uuid.UUID | None = None) -> ResearchMessage:
-        new_msg = ResearchMessage(
-            session_id=session_id,
-            role=role,
-            content=content,
-            tool_calls=tool_calls,
-            attached_file_ids=attached_file_ids,
-            generated_report_id=generated_report_id
-        )
-        self.session.add(new_msg)
-        await self.session.commit()
-        await self.session.refresh(new_msg)
-        return new_msg
-
-    async def get_history(self, session_id: uuid.UUID) -> list[ResearchMessage]:
-        stmt = (
-                select(ResearchMessage)
-                .where(ResearchMessage.session_id == session_id)
-                .order_by(ResearchMessage.created_at)
-        )
-
-        result = await self.session.execute(stmt)
-        return list(result.scalars().all())
+# class ResearchMessageRepository:
+#     def __init__(self, session: AsyncSession):
+#         self.session = session
+#
+#     async def add(self, session_id: uuid.UUID, role: str, content: str | None,
+#                   tool_calls: dict | None = None, attached_file_ids: list | None = None,
+#                   generated_report_id: uuid.UUID | None = None) -> ResearchMessage:
+#         new_msg = ResearchMessage(
+#             session_id=session_id,
+#             role=role,
+#             content=content,
+#             tool_calls=tool_calls,
+#             attached_file_ids=attached_file_ids,
+#             generated_report_id=generated_report_id
+#         )
+#         self.session.add(new_msg)
+#         await self.session.commit()
+#         await self.session.refresh(new_msg)
+#         return new_msg
+#
+#     async def get_history(self, session_id: uuid.UUID) -> list[ResearchMessage]:
+#         stmt = (
+#                 select(ResearchMessage)
+#                 .where(ResearchMessage.session_id == session_id)
+#                 .order_by(ResearchMessage.created_at)
+#         )
+#
+#         result = await self.session.execute(stmt)
+#         return list(result.scalars().all())
 
 class FileReportRepository:
+    """ 处理 agent 产生的报告 """
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create(self, user_id: str, session_id: str) -> FileReport:
+    async def create(self, user_id: str, conversation_id: str, task_id: uuid.UUID | None = None, trigger_message_id: int | None = None) -> FileReport:
         report = FileReport(
             id=uuid.uuid4(),
             user_id=user_id,
-            session_id=session_id,
+            conversation_id=conversation_id,
+            task_id=task_id,
+            trigger_message_id=trigger_message_id,
             status="running"
         )
         self.session.add(report)
@@ -256,11 +296,57 @@ class FileReportRepository:
             report.error_message = error_message
             await self.session.commit()
 
-    async def get_latest_by_session(self, session_id: uuid.UUID) -> FileReport | None:
+    async def set_saved_status(self, report_id: uuid.UUID, is_saved: bool = True) -> None:
+        """ 修改保存状态 """
+        report = await self.session.get(FileReport, report_id)
+        if report:
+            report.is_saved = is_saved
+            await self.session.commit()
+
+    async def list_saved_by_user(self, user_id: uuid.UUID | str) -> list[FileReport]:
+        """ 列出用户的所有的保存的文件 """
+        stmt = (
+            select(FileReport)
+            .where(FileReport.user_id == user_id)
+            .where(FileReport.is_saved == True)
+            .order_by(desc(FileReport.created_at))
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_latest_by_conversation(self, conversation_id: uuid.UUID) -> FileReport | None:
         result = await self.session.execute(
             select(FileReport)
-            .where(FileReport.session_id == session_id)
+            .where(FileReport.conversation_id == conversation_id)
             .order_by(desc(FileReport.created_at))
             .limit(1)
         )
         return result.scalars().first()
+
+class AsyncTaskRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def create(self,
+                     user_id: uuid.UUID,
+                     conversation_id: uuid.UUID,
+                     trigger_message_id: int,
+                     task_type: str):
+        new_task = AsyncTask(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            trigger_message_id=trigger_message_id,
+            task_type=task_type,
+            status="running"
+        )
+        self.session.add(new_task)
+        await self.session.commit()
+        await self.session.refresh(new_task)
+        return new_task
+
+    async def update_status(self, task_id: uuid.UUID, status: str, error_message: str | None = None) -> None:
+        task = await self.session.get(AsyncTask, task_id)
+        if task:
+            task.status = status
+            task.error_message = error_message
+            await self.session.commit()

@@ -74,12 +74,13 @@ async def grep_search_chunks(
     limit: int = 10
 ) -> list[dict]:
     """ 精确文本匹配: ILIKE 子串查找， 用于代码变量、配置项、日志关键词"""
+    escaped = keyword.replace('/', '//').replace('%','/%').replace('_', '/_')
     stmt = (
         select(FileChunk, FileDocument)
         .join(FileDocument, FileChunk.document_id == FileDocument.id)
         .where(FileChunk.user_id == user_id)
         .where(FileDocument.status == "indexed")
-        .where(FileChunk.content.ilike(f"%{keyword}%"))
+        .where(FileChunk.content.ilike(f"%{escaped}%", escape='/'))
     )
     if ids:
         stmt = stmt.where(FileChunk.document_id.in_(ids))
@@ -126,7 +127,8 @@ async def search_document_by_vector(query: str, config: RunnableConfig) -> str:
 @tool
 async def search_document_by_grep(keyword: str, config: RunnableConfig) -> str:
     """
-    使用精确字符匹配(类似于 Linux grep) 查找特定变量名、函数定义、类名或者是配置参数。
+    使用精确字符匹配(类似于 Linux grep) 查找特定变量名、函数定义、类名或者是配置参数,
+    返回准确的信息包括信息片段在原文本中的行号、片段id以及内容。
     """
 
     configurable = config.get("configurable", {})

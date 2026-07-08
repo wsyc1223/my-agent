@@ -65,7 +65,7 @@ function injectCodeBlockFeatures() {
       // 创建复制按钮
       const copyBtn = document.createElement('button')
       copyBtn.className = 'copy-btn-3d'
-      copyBtn.innerHTML = 'Copy'
+      copyBtn.textContent = 'Copy'
       copyBtn.setAttribute('title', '复制代码')
       
       const codeEl = pre.querySelector('code')
@@ -74,14 +74,14 @@ function injectCodeBlockFeatures() {
       copyBtn.addEventListener('click', async () => {
         try {
           await navigator.clipboard.writeText(textToCopy)
-          copyBtn.innerHTML = '✓ Copied'
+          copyBtn.textContent = '✓ Copied'
           copyBtn.classList.add('copied')
           setTimeout(() => {
-            copyBtn.innerHTML = 'Copy'
+            copyBtn.textContent = 'Copy'
             copyBtn.classList.remove('copied')
           }, 2000)
         } catch (err) {
-          copyBtn.innerHTML = 'Error'
+          copyBtn.textContent = 'Error'
         }
       })
       
@@ -95,7 +95,7 @@ function injectCodeBlockFeatures() {
           const lang = langClass.replace('language-', '').toUpperCase()
           const badge = document.createElement('span')
           badge.className = 'lang-badge-3d'
-          badge.innerHTML = lang
+          badge.textContent = lang
           pre.appendChild(badge)
         }
       }
@@ -167,6 +167,228 @@ function handleKeyDown(e: KeyboardEvent) {
   }
 }
 
+import { apiUrl, getAuthHeaders } from '@/services/api'
+
+// ====== 深度研究与报告面板的集成逻辑 ======
+interface Tab {
+  id: string
+  title: string
+  content: string
+  type: 'file' | 'report'
+}
+
+const tabs = ref<Tab[]>([])
+const activeTabId = ref('')
+const reportEl = ref<HTMLElement | null>(null)
+const searchInput = ref<HTMLInputElement | null>(null)
+
+const searchQuery = ref('')
+const searchMatchCount = ref(0)
+let currentHighlightIndex = 0
+const searchActive = ref(false)
+const isSearchConfirmed = ref(false)
+
+const activeTabContent = computed(() => {
+  const t = tabs.value.find(x => x.id === activeTabId.value)
+  return t ? t.content : ''
+})
+
+const showReport = computed(() => isRightSidebarVisible.value && tabs.value.length > 0)
+const isAgentStatusCollapsed = ref(false)
+const isReportCollapsed = ref(false)
+
+// 侦听会话切换，自动初始化
+watch(() => chat.currentId, () => {
+  tabs.value = []
+  activeTabId.value = ''
+  searchQuery.value = ''
+  searchActive.value = false
+  isSearchConfirmed.value = false
+  if (chat.reportContent) {
+    tabs.value.push({
+      id: 'report',
+      title: '📝 深度调研报告.md',
+      content: chat.reportContent,
+      type: 'report'
+    })
+    activeTabId.value = 'report'
+  }
+})
+
+// 侦听实时生成的报告正文
+watch(() => chat.reportContent, (newVal) => {
+  if (newVal) {
+    const existing = tabs.value.find(t => t.id === 'report')
+    if (existing) {
+      existing.content = newVal
+    } else {
+      tabs.value.push({
+        id: 'report',
+        title: '📝 深度调研报告.md',
+        content: newVal,
+        type: 'report'
+      })
+    }
+    if (!activeTabId.value) {
+      activeTabId.value = 'report'
+    }
+  }
+})
+
+// 打开报告 Tab
+async function openReportTab(reportId?: string) {
+  if (reportId) {
+    await chat.fetchReportDetail(reportId)
+  }
+  
+  const tabId = reportId ? `report-${reportId}` : 'report'
+  const existing = tabs.value.find(t => t.id === tabId)
+  if (existing) {
+    existing.content = chat.reportContent
+  } else {
+    tabs.value.push({
+      id: tabId,
+      title: reportId ? `📝 深度调研报告-${reportId.substring(0, 6)}.md` : '📝 深度调研报告.md',
+      content: chat.reportContent || '报告内容加载中或为空...',
+      type: 'report'
+    })
+  }
+  activeTabId.value = tabId
+  isRightSidebarVisible.value = true // 展开右侧
+}
+
+function closeTab(id: string, e: Event) {
+  e.stopPropagation()
+  const idx = tabs.value.findIndex(t => t.id === id)
+  if (idx !== -1) {
+    tabs.value.splice(idx, 1)
+    if (activeTabId.value === id) {
+      activeTabId.value = tabs.value.length > 0 ? tabs.value[tabs.value.length - 1].id : ''
+    }
+  }
+}
+
+// 报告实时全文检索
+function executeSearchHighlight() {
+  const container = reportEl.value
+  if (!container) return
+  
+  // 清理上一轮的高亮
+  container.querySelectorAll('mark.search-highlight').forEach(mark => {
+    const parent = mark.parentNode
+    if (parent) {
+      parent.replaceChild(document.createTextNode(mark.textContent || ''), mark)
+      parent.normalize()
+    }
+  })
+
+  const query = searchQuery.value.trim().toLowerCase()
+  if (!query) {
+    searchMatchCount.value = 0
+    return
+  }
+
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null)
+  const nodesToReplace: any[] = []
+  let node: Text | null
+  
+  while (node = walker.nextNode() as Text) {
+    const text = node.nodeValue?.toLowerCase() || ''
+    let startIndex = 0
+    let index
+    const matches = []
+    while ((index = text.indexOf(query, startIndex)) > -1) {
+      matches.push({ start: index, end: index + query.length })
+      startIndex = index + query.length
+    }
+    if (matches.length > 0) {
+      nodesToReplace.push({ node, matches })
+    }
+  }
+
+  let totalMatches = 0
+  for (const { node, matches } of nodesToReplace) {
+    const textContent = node.nodeValue || ''
+    const fragment = document.createDocumentFragment()
+    let lastEnd = 0
+
+    for (const match of matches) {
+      if (match.start > lastEnd) {
+        fragment.appendChild(document.createTextNode(textContent.slice(lastEnd, match.start)))
+      }
+      const mark = document.createElement('mark')
+      mark.className = 'search-highlight'
+      mark.id = `search-match-${totalMatches}`
+      mark.textContent = textContent.slice(match.start, match.end)
+      fragment.appendChild(mark)
+      lastEnd = match.end
+      totalMatches++
+    }
+    if (lastEnd < textContent.length) {
+      fragment.appendChild(document.createTextNode(textContent.slice(lastEnd)))
+    }
+    node.parentNode?.replaceChild(fragment, node)
+  }
+  
+  searchMatchCount.value = totalMatches
+  currentHighlightIndex = 0
+  if (isSearchConfirmed.value) {
+    scrollToMatch()
+  }
+}
+
+function scrollToMatch() {
+  if (searchMatchCount.value === 0) return
+  document.querySelectorAll('mark.search-highlight.current').forEach(m => m.classList.remove('current'))
+  
+  const currentMark = document.getElementById(`search-match-${currentHighlightIndex}`)
+  if (currentMark) {
+    currentMark.classList.add('current')
+    currentMark.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+}
+
+function nextMatch() {
+  if (searchMatchCount.value > 0) {
+    currentHighlightIndex = (currentHighlightIndex + 1) % searchMatchCount.value
+    scrollToMatch()
+  }
+}
+
+function handleSearchEnter() {
+  isSearchConfirmed.value = true
+  nextMatch()
+}
+
+function toggleSearch() {
+  searchActive.value = !searchActive.value
+  if (!searchActive.value) {
+    searchQuery.value = ''
+    isSearchConfirmed.value = false
+    executeSearchHighlight()
+  } else {
+    nextTick(() => searchInput.value?.focus())
+  }
+}
+
+let searchTimeout: any
+watch(searchQuery, () => {
+  isSearchConfirmed.value = false
+  clearTimeout(searchTimeout)
+  searchTimeout = setTimeout(() => {
+    executeSearchHighlight()
+  }, 300)
+})
+
+// 监听 Tab 切换，自动重置搜索状态并重新高亮
+watch(activeTabId, () => {
+  nextTick(() => {
+    if (searchQuery.value) {
+      executeSearchHighlight()
+    }
+  })
+})
+
 onMounted(() => {
   highlightCode()
 })
@@ -215,7 +437,7 @@ onMounted(() => {
     </header>
 
     <!-- 响应式多板块 Bento Grid 工作区 -->
-    <div class="workspace-bento" :class="{ 'no-right-sidebar': !isRightSidebarVisible }">
+    <div class="workspace-bento" :class="{ 'no-right-sidebar': !isRightSidebarVisible, 'has-report': showReport }">
       
       <!-- 主聊天对话流交互板块 (中栏) -->
       <div class="chat-area">
@@ -253,14 +475,6 @@ onMounted(() => {
                   <span class="shortcut-tag">Enter 发送</span>
                   <span class="shortcut-tag">Shift + Enter 换行</span>
                 </div>
-                <div class="footer-actions" style="display: flex; gap: 12px; align-items: center;">
-                  <button 
-                    class="btn-deep-research-centered" 
-                    @click="$router.push('/research')"
-                  >
-                    🚀 进入深度研究模式
-                  </button>
-                </div>
               </div>
             </div>
           </div>
@@ -273,9 +487,28 @@ onMounted(() => {
               class="msg-wrapper"
               :class="[m.role, { streaming: i === chat.messages.length - 1 && chat.streaming }]"
             >
-              <div class="msg-bubble-3d">
+              <!-- 普通和助理消息的渲染 -->
+              <div v-if="m.role !== 'subagent'" class="msg-bubble-3d">
                 <div class="msg-body markdown-body" v-html="renderMarkdown(m.content || (chat.streaming && i === chat.messages.length - 1 ? '...' : ''))"></div>
                 <span v-if="i === chat.messages.length - 1 && chat.streaming" class="cursor-glow" />
+              </div>
+
+              <!-- 深度研究子任务卡片的渲染 (适配 subagent 角色) -->
+              <div v-else class="message-files" style="margin-top: 8px; max-width: 100%;">
+                <div 
+                  class="file-attachment-card report-card-btn"
+                  @click="m.task?.report_id && openReportTab(m.task.report_id)"
+                  :title="m.task?.report_id ? '点击查看深度调研报告' : '后台深度检索任务进行中...'"
+                  style="display: flex; align-items: center; gap: 12px; padding: 12px; background: rgba(255, 255, 255, 0.08); border: 1px solid var(--border-color); border-radius: 8px; cursor: pointer; transition: all 0.2s;"
+                >
+                  <div class="file-icon-wrapper report-icon" style="font-size: 20px;">
+                    📝
+                  </div>
+                  <div class="file-details" style="display: flex; flex-direction: column;">
+                    <span class="file-name" style="font-weight: 500; font-size: 13.5px;">{{ m.content }}</span>
+                    <small v-if="m.task?.id" class="task-id-badge" style="font-size: 10px; opacity: 0.6; margin-top: 2px;">任务ID: {{ m.task.id.substring(0, 8) }} | 状态: {{ m.task.status.toUpperCase() }}</small>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -344,13 +577,6 @@ onMounted(() => {
                 <span class="shortcut-tag">Shift + Enter 换行</span>
               </div>
               <div class="footer-actions" style="display: flex; gap: 12px; align-items: center;">
-                <button 
-                  class="btn-deep-research" 
-                  @click="$router.push('/research')"
-                  style="background: rgba(16, 185, 129, 0.1); border: 1px solid var(--primary); color: var(--primary); border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 12px;"
-                >
-                  🚀 进入深度研究模式
-                </button>
                 <div class="node-status-tag">
                   <span class="node-dot"></span>
                   Sandbox Shield Active
@@ -362,9 +588,9 @@ onMounted(() => {
       </div>
 
       <!-- Agent 观测状态面板 -->
-      <aside class="observation-center" v-show="isRightSidebarVisible">
-        <!-- 仅保留 智能 Agent 状态面板 -->
-        <div class="bento-card console-card" :class="[
+      <aside class="observation-center" v-show="isRightSidebarVisible" style="display: flex; flex-direction: column; gap: 16px; overflow-y: auto; padding: 16px; box-sizing: border-box;">
+        <!-- 智能 Agent 状态面板 (折叠卡片) -->
+        <div class="bento-card console-card" style="flex-shrink: 0;" :class="[
           chat.streaming && !chat.toolRunning && !chat.interrupted ? 'b-streaming' : '',
           chat.toolRunning ? 'b-tools' : '',
           chat.interrupted ? 'b-warning' : '',
@@ -378,10 +604,13 @@ onMounted(() => {
           ]"></div>
           <div class="glass-reflection"></div>
           
-          <h3 class="bento-card-title">🤖 Agent Status</h3>
-          <p class="bento-card-subtitle">系统当前运行状态</p>
+          <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer; margin-bottom: 3px;" @click="isAgentStatusCollapsed = !isAgentStatusCollapsed">
+            <h3 class="bento-card-title" style="margin-bottom: 0;">🤖 Agent Status</h3>
+            <span style="font-size: 10px; color: var(--text-secondary);">{{ isAgentStatusCollapsed ? '▼ 展开' : '▲ 折叠' }}</span>
+          </div>
+          <p class="bento-card-subtitle" v-show="!isAgentStatusCollapsed">系统当前运行状态</p>
           
-          <div class="status-panel-body">
+          <div class="status-panel-body" v-show="!isAgentStatusCollapsed">
             <!-- 状态 A：思考流式回答中 -->
             <div v-if="chat.streaming && !chat.toolRunning && !chat.interrupted" class="status-content">
               <span class="preview-badge-b tag-green-b">
@@ -421,6 +650,53 @@ onMounted(() => {
               <div class="status-label-b font-gray-b">系统就绪，等待您的指令</div>
               <div class="status-sub-b">Kernel Idle & Ready</div>
             </div>
+          </div>
+        </div>
+
+        <!-- 深度研究报告展示画布 (有报告展示时显示) -->
+        <div v-if="tabs.length > 0" class="report-panel card-wrapper-panel" style="flex: 1; display: flex; flex-direction: column; min-height: auto;">
+          <div class="report-tabs">
+            <div class="tabs-list">
+              <div 
+                v-for="tab in tabs" 
+                :key="tab.id" 
+                class="tab-item"
+                :class="{ active: tab.id === activeTabId }"
+                @click="activeTabId = tab.id"
+              >
+                <span>{{ tab.title }}</span>
+                <button class="tab-close-btn" @click.stop="closeTab(tab.id, $event)">✖</button>
+              </div>
+            </div>
+            <div class="tab-actions" style="display: flex; align-items: center; gap: 8px;">
+              <div class="search-bar-inline" v-if="searchActive">
+                <input 
+                  v-model="searchQuery" 
+                  placeholder="搜索当前内容..." 
+                  @keydown.enter="handleSearchEnter"
+                  ref="searchInput"
+                />
+                <span class="match-count" v-if="searchQuery">
+                  {{ searchMatchCount > 0 ? currentHighlightIndex + 1 : 0 }}/{{ searchMatchCount }}
+                </span>
+                <button class="icon-btn" @click="toggleSearch">✖</button>
+              </div>
+              <button class="search-toggle-btn" v-else @click="toggleSearch" title="搜索内容">
+                🔍 检索
+              </button>
+              <button class="search-toggle-btn" style="padding: 2px 8px; font-size: 10px; cursor: pointer; border-radius: 4px;" @click="isReportCollapsed = !isReportCollapsed" :title="isReportCollapsed ? '展开报告' : '折叠报告'">
+                {{ isReportCollapsed ? '▼ 展开' : '▲ 折叠' }}
+              </button>
+            </div>
+          </div>
+          
+          <div 
+            v-show="!isReportCollapsed"
+            class="report-body markdown-body" 
+            :class="{ 'confirmed-search': isSearchConfirmed }"
+            ref="reportEl" 
+            v-html="renderMarkdown(activeTabContent)"
+          >
           </div>
         </div>
       </aside>
@@ -1522,6 +1798,168 @@ html.dark .tick-mark-chat {
 @media (max-width: 992px) {
   .tick-nav-chat {
     right: 15px !important;
+  }
+}
+
+/* 报告/文件查看器专属 CSS */
+.report-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.card-wrapper-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.report-tabs {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.04);
+  gap: 12px;
+}
+
+.tabs-list {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  flex: 1;
+}
+
+.tab-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12.5px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+
+.tab-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-main);
+}
+
+.tab-item.active {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-main);
+  border-color: var(--border-color);
+}
+
+.tab-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 2px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tab-close-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #ef4444;
+}
+
+.tab-actions {
+  display: flex;
+  align-items: center;
+}
+
+.search-toggle-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11.5px;
+  transition: all 0.2s;
+}
+.search-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.search-bar-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border-color);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.search-bar-inline input {
+  background: transparent;
+  border: none;
+  color: var(--text-main);
+  font-size: 12px;
+  outline: none;
+  width: 120px;
+}
+.search-bar-inline .match-count {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.search-bar-inline .icon-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.report-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-main);
+}
+
+/* 全局搜索高亮的魔幻光效 */
+mark.search-highlight {
+  background: rgba(30, 144, 255, 0.35) !important; /* 经典深蓝色背景 */
+  border-bottom: 2px solid #1e90ff;
+  color: inherit !important;
+  border-radius: 2px;
+  transition: all 0.2s;
+}
+
+mark.search-highlight.current {
+  background: rgba(255, 140, 0, 0.5) !important; /* 橙黄色高亮聚焦 */
+  border-bottom: 2px solid #ff8c00;
+  box-shadow: 0 0 8px #ff8c00;
+}
+
+/* 支持报告展现时的 Grid 比例重设 */
+.workspace-bento.has-report {
+  grid-template-columns: 1fr 50% !important; /* 开启左右 1/2 分屏画布 */
+}
+
+@media (max-width: 992px) {
+  .workspace-bento.has-report {
+    grid-template-columns: 1fr !important;
   }
 }
 </style>

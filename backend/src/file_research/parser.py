@@ -35,9 +35,10 @@ def decode_text_file(filename: str, data: bytes) -> ParsedFile:
     解码字节流为 UTF-8 文本，并应用文件大小和内容完整性约束
     """
     safe_name = validate_filename(filename)
-    if len(data) > MAX_FILE_BYTES:
-        raise ValueError("文件超过 5MB 限制")
  
+    if len(data) > 5 * 1024 * 1024:
+        raise ValueError("文件超过 5MB 限制")
+
     # 使用 errors="replace" 柔性处理非法编码字符，防止解码意外崩溃
     text = data.decode("utf-8", errors="replace").strip()
     if not text:

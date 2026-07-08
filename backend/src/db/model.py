@@ -49,6 +49,8 @@ class Conversation(Base):
 
     user = relationship("User", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at")
+    reports = relationship("FileReport", back_populates="conversation")
+    tasks = relationship("AsyncTask", back_populates="conversation", cascade="all, delete-orphan")
 
 class Message(Base):
     __tablename__ = "messages"
@@ -60,7 +62,13 @@ class Message(Base):
     created_at = Column(DateTime, server_default=func.now())
     embedding = Column(Vector(768), nullable=True)
 
+    # 如果此次消息触发了后台子任务，则需要添加关联的消息id和任务id
+    referred_message_id = Column(BigInteger, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
+    associated_task_id = Column(UUID, ForeignKey("async_tasks.id", ondelete="SET NULL"), nullable=True)
+
     conversation = relationship("Conversation", back_populates="messages")
+    associated_task = relationship("AsyncTask", foreign_keys=[associated_task_id])
+
 
 class FileDocument(Base):
     __tablename__ = "file_documents"
@@ -80,6 +88,9 @@ class FileDocument(Base):
     user = relationship("User")
     # 联级删除：文件删除后，其所有切块自动在数据库里面删除
     chunks = relationship("FileChunk", back_populates="document", cascade="all, delete-orphan")
+    __table_args__ = (
+        UniqueConstraint('user_id', 'sha256', name='_user_sha256_uc'),
+    )
 
 class FileChunk(Base):
     __tablename__ = "file_chunks"
@@ -97,48 +108,78 @@ class FileChunk(Base):
 
     document = relationship("FileDocument", back_populates="chunks")
 
-class ResearchSession(Base):
-    __tablename__ = "research_sessions"
+
+class AsyncTask(Base):
+    """ 通用任务控制表 """
+    __tablename__ = "async_tasks"
 
     id = Column(UUID, primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    title = Column(String(256), nullable=True)
+    conversation_id = Column(UUID, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True) # 关联的会话id
+    trigger_message_id = Column(BigInteger, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True) # 关联的消息id
+
+    task_type = Column(String(50), nullable=False, default="deep_research")
+    status = Column(String(20), nullable=False, default="running")
+    error_message = Column(Text, nullable=True)
+
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     user = relationship("User")
-    messages = relationship("ResearchMessage", back_populates="session", cascade="all, delete-orphan", order_by="ResearchMessage.created_at")
-    reports = relationship("FileReport", back_populates="session", cascade="all, delete-orphan")
+    conversation = relationship("Conversation", back_populates="tasks")
+    trigger_message = relationship("Message", foreign_keys=[trigger_message_id])
 
-class ResearchMessage(Base):
-    __tablename__ = "research_messages"
+    # 和具体结果一对一关联
+    file_report = relationship("FileReport", back_populates="task", uselist=False, cascade="all, delete-orphan")
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    session_id = Column(UUID, ForeignKey("research_sessions.id", ondelete="CASCADE"), index=True)
-    role = Column(String(16), nullable=False)
-    content = Column(Text, nullable=True)
-    tool_calls = Column(JSONB, nullable=True)
 
-    attached_file_ids = Column(JSONB, nullable=True)
-    generated_report_id = Column(UUID, ForeignKey("file_reports.id", ondelete="SET NULL"), nullable=True)
-    created_at = Column(DateTime, server_default=func.now())
+# class ResearchSession(Base):
+#     __tablename__ = "research_sessions"
+#
+#     id = Column(UUID, primary_key=True, default=uuid.uuid4)
+#     user_id = Column(UUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+#     title = Column(String(256), nullable=True)
+#     created_at = Column(DateTime, server_default=func.now())
+#     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+#
+#     user = relationship("User")
+#     messages = relationship("ResearchMessage", back_populates="session", cascade="all, delete-orphan", order_by="ResearchMessage.created_at")
+#     reports = relationship("FileReport", back_populates="session", cascade="all, delete-orphan")
 
-    session = relationship("ResearchSession", back_populates="messages")
-    report = relationship("FileReport", back_populates="messages")
+# class ResearchMessage(Base):
+#     __tablename__ = "research_messages"
+#
+#     id = Column(BigInteger, primary_key=True, autoincrement=True)
+#     session_id = Column(UUID, ForeignKey("research_sessions.id", ondelete="CASCADE"), index=True)
+#     role = Column(String(16), nullable=False)
+#     content = Column(Text, nullable=True)
+#     tool_calls = Column(JSONB, nullable=True)
+#
+#     attached_file_ids = Column(JSONB, nullable=True)
+#     generated_report_id = Column(UUID, ForeignKey("file_reports.id", ondelete="SET NULL"), nullable=True)
+#     created_at = Column(DateTime, server_default=func.now())
+#
+#     session = relationship("ResearchSession", back_populates="messages")
+#     report = relationship("FileReport", back_populates="messages")
 
 class FileReport(Base):
     __tablename__ = "file_reports"
-    """ 存储用户 ID, """
+
     id = Column(UUID, primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    session_id = Column(UUID, ForeignKey("research_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    trigger_message_id = Column(BigInteger, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
+    conversation_id = Column(UUID, ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True, index=True)
+    task_id = Column(UUID, ForeignKey("async_tasks.id", ondelete="SET NULL"), nullable=True, unique=True, index=True)
+
+    is_saved = Column(Boolean, nullable=False, default=False)
     status = Column(String(20), nullable=False, default="running") # running, success, error
-    report_md = Column(Text, nullable=True)
+    report_md = Column(Text, nullable=True) # 报告内容
     selected_chunk_ids = Column(JSONB, nullable=True) # 记录引用的 chunk ID 列表， 用于追溯来源
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     user = relationship("User")
-    session = relationship("ResearchSession", back_populates="reports")
-    messages = relationship("ResearchMessage", back_populates="report")
+    conversation = relationship("Conversation", back_populates="reports")
+    task = relationship("AsyncTask", back_populates="file_report")

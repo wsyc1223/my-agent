@@ -361,20 +361,25 @@ async function openFileReport(fileId: string) {
   }
 }
 
-// 显式打开报告标签页并展现在右侧
-function openReportTab() {
-  const existing = tabs.value.find(t => t.id === 'report')
+// 显式打开报告标签页并展现以在右侧
+async function openReportTab(reportId?: string) {
+  if (reportId) {
+    await research.fetchReportDetail(reportId)
+  }
+  
+  const tabId = reportId ? `report-${reportId}` : 'report'
+  const existing = tabs.value.find(t => t.id === tabId)
   if (existing) {
     existing.content = research.reportContent
   } else {
     tabs.value.push({
-      id: 'report',
-      title: '📝 深度调研报告.md',
-      content: research.reportContent,
+      id: tabId,
+      title: reportId ? `📝 深度调研报告-${reportId.substring(0, 6)}.md` : '📝 深度调研报告.md',
+      content: research.reportContent || '报告内容加载中或为空...',
       type: 'report'
     })
   }
-  activeTabId.value = 'report'
+  activeTabId.value = tabId
 }
 
 function closeTab(id: string, e: Event) {
@@ -459,18 +464,19 @@ onMounted(async () => {
               </div>
             </div>
 
-            <!-- AI生成调研报告的查看卡片 -->
-            <div v-if="m.role === 'assistant' && research.reportContent && i === lastAssistantMsgIndex" class="message-files">
+            <!-- AI生成调研报告的查看卡片 (适配 subagent 角色) -->
+            <div v-if="m.role === 'subagent'" class="message-files">
               <div 
                 class="file-attachment-card report-card-btn"
-                @click="openReportTab"
-                title="查看深度报告"
+                @click="m.task?.report_id && openReportTab(m.task.report_id)"
+                :title="m.task?.report_id ? '查看深度报告' : '任务进行中'"
               >
                 <div class="file-icon-wrapper report-icon">
                   <span class="file-badge">MD</span>
                 </div>
                 <div class="file-details">
-                  <span class="file-name">📝 点击查看：深度调研报告.md</span>
+                  <span class="file-name">📝 {{ m.content }}</span>
+                  <small v-if="m.task?.id" class="task-id-badge" style="font-size: 10px; opacity: 0.7; display: block; margin-top: 2px;">任务ID: {{ m.task.id.substring(0, 8) }}</small>
                 </div>
               </div>
             </div>
