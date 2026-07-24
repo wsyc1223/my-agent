@@ -1,4 +1,5 @@
 import httpx
+import structlog
 import asyncio
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
@@ -7,6 +8,18 @@ from bs4 import BeautifulSoup
 from src.config import settings
 import ipaddress, socket
 from urllib.parse import urlparse
+
+"""
+工具层异常处理原则：
+1. 优先将异常转为"错误字符串返回"（让 LLM 自行决策重试/换工具），
+   仅不可恢复异常才向上抛。
+2. 网络工具（search_web/fetch_url）显式 timeout（10秒）。
+3. 异常分类要精细（TimeoutException/ConnectError/HTTPStatusError/RequestError/ValueError），
+   避免 except Exception 泄露敏感信息（如 API key）。
+4. 工具返回的错误字符串应简洁、面向用户（不包含技术细节如 stack trace）。
+
+范本：fetch_url（异常分类）+ calculator（业务校验）。
+"""
 
 def is_safe_url(url: str) -> bool:
     # 解析 url
@@ -84,8 +97,8 @@ async def search_web(query: str) -> str:
         返回: result(str): 返回的结果
     """
     tavily_api_key = TAVILY_API_KEY
-    async with httpx.AsyncClient() as client:
-        try:
+    try:
+        async with httpx.AsyncClient() as client:
             resp = await client.post(
                 "https://api.tavily.com/search",
                 json = {
@@ -98,8 +111,17 @@ async def search_web(query: str) -> str:
             )
             resp.raise_for_status()
             data = resp.json()
-        except Exception as e:
-            return f"错误: 搜索引擎暂时不可用(错误详情:{str(e)})"
+    except httpx.TimeoutException:
+        return "错误: 搜索引擎请求超时(10秒)，请稍后重试"
+    except httpx.ConnectError:
+        return "错误: 无法连接到搜索引擎服务器，请检查网络连接"
+    except httpx.HTTPStatusError as e:
+        # Tavily 返回 401/429 时不应泄露响应体
+        return f"错误: 搜索引擎返回错误状态码 {e.response.status_code}，可能是限流或鉴权问题"
+    except httpx.RequestError as e:
+        return "错误: 搜索引擎网络请求失败，请稍后重试"
+    except ValueError as e:
+        return "错误: 搜索引擎返回的数据格式异常"
 
     results = []
     if data.get("answer"):
@@ -156,11 +178,19 @@ async def spawn_deep_research(query: str, config: RunnableConfig) -> str:
     conversation_id = configurable.get("thread_id")
     user_id = configurable.get("user_id")
 
-    asyncio.create_task(run_research_in_background(
+    task = asyncio.create_task(run_research_in_background(
         query=query,
         conversation_id=conversation_id,
         user_id=user_id
     ))
+    def _on_research_done(t: asyncio.Task):
+        try:
+            exc = t.exception()
+            if exc:
+                structlog.get_logger(__name__).exception("deep_research_task_crashed", exc=exc)
+        except asyncio.CancelledError:
+            pass
+    task.add_done_callback(_on_research_done)
 
     return "已成功为您启动后台深度检索与技术研究任务。系统正在为您检索相关文献与网页、整理情报并撰写详细的技术报告，完成后将在此对话中向您发送报告卡片，请稍候。"
 

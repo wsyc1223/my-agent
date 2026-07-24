@@ -1,4 +1,6 @@
 from src.graph import app 
+import structlog
+from src.compensation import mark_needs_sync
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, AIMessageChunk
 from fastapi.responses import StreamingResponse  
 from src.eval_service.task import evaluate_trace_task
@@ -8,9 +10,12 @@ from src.rag import embed_text, search_messages
 from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.observability import get_langfuse_handler
+from src.exceptions import ensure_agent_error
 import json
 import uuid
 import asyncio
+
+logger = structlog.get_logger(__name__)
 
 # 流式
 async def chat_stream(message: str, user_id: str, db: AsyncSession, global_memory: bool = False, conversation_id: uuid.UUID | None = None):
@@ -29,8 +34,9 @@ async def chat_stream(message: str, user_id: str, db: AsyncSession, global_memor
                 conv = await conv_repo.create(user_id=user_id, global_memory=global_memory)
                 conversation_id = conv.id
 
-        is_global_memory_enabled = conv.global_memory
+        structlog.contextvars.bind_contextvars(conversation_id=str(conversation_id))
 
+        is_global_memory_enabled = conv.global_memory
 
         # 2 把用户的消息转化成为向量存入数据库
         msg = await msg_repo.add(conversation_id, "user", message)
@@ -67,13 +73,16 @@ async def chat_stream(message: str, user_id: str, db: AsyncSession, global_memor
                 "langfuse_user_id": str(user_id),
                 "langfuse_tags": ["chat_stream"]
             },
-            "callbacks": [handler]
+            "callbacks": [handler],
+            "recursion_limit": 25
         }
 
         # 6 向前端通知会话建立
         yield f"data: {json.dumps({'type': 'conversation_id', 'conversation_id': str(conversation_id)})}\n\n"
 
         # 7 驱动大模型逐步返回消息片段
+        yielded_text = False # 追踪是否已经有文本流出，决定 partial
+        # ========= 第 1 段: LLM 流式 （失败 -> error 帧并结束，不落库）=========
         try:
             async for msg, metadata in app.astream(
                 state_input, config, stream_mode="messages"
@@ -81,52 +90,60 @@ async def chat_stream(message: str, user_id: str, db: AsyncSession, global_memor
                 # 7.1 如果 msg 里面包含 AIMessageChunk(说明是 AI 返回的消息片段)， 就返回到前端
                 if isinstance(msg, AIMessageChunk):
                     if msg.content:
+                        yielded_text = True # 标记已流出
                         val = msg.content.replace(chr(10), '\\n')
                         yield f"data: {json.dumps({'type': 'text', 'content': val})}\n\n"
                         await asyncio.sleep(0.01)
-
-            # 防御机制，保证这里的数据库写入操作一定能够成功，不会因为网络中断或者是用户中途退出而出错
-            async def save_data_to_db():
-                # 7.2 这里只获取最后一条消息，因为chat_stream 只会返回一条 llm 的消息，以后如果有逻辑需要修改可以改
-                state = await app.aget_state(config)
-                last_msg = state.values["messages"][-1]
-
-                # 7.3 把 AI 返回的消息存进数据库， 这里只需要存储 AIMessage 即可
-                if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
-                    rep = await msg_repo.add(conversation_id, "assistant", last_msg.content or "", last_msg.tool_calls)
-                elif isinstance(last_msg, AIMessage):
-                    rep = await msg_repo.add(conversation_id, "assistant", last_msg.content)
-
-                # 7.4 把 AI 的消息计算向量然后存进数据库
-                rep_emb = await asyncio.to_thread(embed_text, last_msg.content)
-                await msg_repo.set_embedding(rep.id, rep_emb)
-
-                if not conv.title:
-                    await conv_repo.update_title(user_id, conversation_id, message[:50])
-
-                # 强制把本次 Trace 数据发送到 langfuse 云端
-                handler._langfuse_client.flush()
-
-                # 把本次的数据添加到消息队列
-                await evaluate_trace_task.kiq(
-                    trace_id=conversation_id.hex,
-                    user_id=str(user_id)
-                )
-
-            await asyncio.shield(save_data_to_db())
-
-            # 7.5 如果发现有 tools 在图结构里，说明下一步是调工具，则返回给前端 interrupt
-            state = await app.aget_state(config)
-            if state.next and "tools" in state.next:
-                yield f"data: {json.dumps({'type': 'interrupt', 'thread_id': str(thread_id), 'conversation_id': str(conversation_id)})}\n\n"
-
-            # 7.6 结束，返回 done 给前端
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-
-        # 8 遇到错误，返回错误消息
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            err = ensure_agent_error(e)
+            logger.warning("chat_stream_error", code=err.code, recoverable=err.recoverable,
+                           partial=yielded_text, detail=err.detail)
+            yield f"data: {json.dumps(err.to_sse_frame(partial=yielded_text))}\n\n"
+            return # LLM 失败就结束，不往下落库
 
+        # ======= LLM 已成功: 落库 + 收尾 (落库失败不影响已经成功的回复) ========
+        async def save_data_to_db():
+            # 7.2 这里只获取最后一条消息，因为chat_stream 只会返回一条 llm 的消息，以后如果有逻辑需要修改可以改
+            state = await app.aget_state(config)
+            last_msg = state.values["messages"][-1]
+
+            # 7.3 把 AI 返回的消息存进数据库， 这里只需要存储 AIMessage 即可
+            if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
+                rep = await msg_repo.add(conversation_id, "assistant", last_msg.content or "", last_msg.tool_calls)
+            elif isinstance(last_msg, AIMessage):
+                rep = await msg_repo.add(conversation_id, "assistant", last_msg.content)
+
+            # 7.4 把 AI 的消息计算向量然后存进数据库
+            rep_emb = await asyncio.to_thread(embed_text, last_msg.content)
+            await msg_repo.set_embedding(rep.id, rep_emb)
+
+            if not conv.title:
+                await conv_repo.update_title(user_id, conversation_id, message[:50])
+
+            # 强制把本次 Trace 数据发送到 langfuse 云端
+            handler._langfuse_client.flush()
+
+            # 把本次的数据添加到消息队列
+            await evaluate_trace_task.kiq(
+                trace_id=conversation_id.hex,
+                user_id=str(user_id)
+            )
+
+        try:
+            await asyncio.shield(save_data_to_db())
+        except Exception as e:
+            # 落库失败: checkpoint 已经存了真相，这里只记录，不发error 帧、不影响 done
+            # 后续可由补偿任务从 aget_state 重放落库
+            logger.exception("save_data_to_db_failed", conversation_id=str(conversation_id))
+            await mark_needs_sync(str(conversation_id), source="chat_stream")
+
+        # 7.5 如果发现有 tools 在图结构里，说明下一步是调工具，则返回给前端 interrupt
+        state = await app.aget_state(config)
+        if state.next and "tools" in state.next:
+            yield f"data: {json.dumps({'type': 'interrupt', 'thread_id': str(thread_id), 'conversation_id': str(conversation_id)})}\n\n"
+
+        # 7.6 结束，返回 done 给前端
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     return StreamingResponse(generator(),
                             media_type="text/event-stream",
@@ -141,6 +158,7 @@ async def resume(user_id: uuid.UUID, thread_id: uuid.UUID, approved: bool, db: A
     async def generator():
         nonlocal thread_id
         msg_repo = MessageRepository(db)
+        structlog.contextvars.bind_contextvars(conversation_id=str(conversation_id))
 
         # 2 获取之前被中断的消息的状态，并且记录里面的目前消息条数 before_count
         handler = get_langfuse_handler(
@@ -148,7 +166,12 @@ async def resume(user_id: uuid.UUID, thread_id: uuid.UUID, approved: bool, db: A
             user_id=str(user_id),
             tags=["resume"]
         )
-        config = {"configurable": {"thread_id": str(thread_id), "user_id": str(user_id)}, "callbacks": [handler]}
+        config = {
+            "configurable": {"thread_id": str(thread_id),"user_id": str(user_id)},
+            "callbacks": [handler],
+            "recursion_limit": 25
+        }
+
         state = await app.aget_state(config)
         before_count = len(state.values["messages"])
 
@@ -172,6 +195,8 @@ async def resume(user_id: uuid.UUID, thread_id: uuid.UUID, approved: bool, db: A
             yield f"data: {json.dumps({'type': 'tool_run', 'tool_names': tool_names})}\n\n"
 
         # 4 驱动大模型返回消息
+        yielded_text = False
+        # ======== LLM 流式 （失败 -> error 帧并结束） =========
         try:
             async for msg, metadata in app.astream(
                 resume_input, config, stream_mode="messages"
@@ -179,9 +204,17 @@ async def resume(user_id: uuid.UUID, thread_id: uuid.UUID, approved: bool, db: A
                 # 5 如果 msg 里面包含AIMessageChunk，则返回给前端展示
                 if isinstance(msg, AIMessageChunk):
                     if msg.content:
+                        yielded_text = True
                         val = msg.content.replace(chr(10), '\\n')
                         yield f"data: {json.dumps({'type': 'text', 'content': val})}\n\n"
+        except Exception as e:
+            err = ensure_agent_error(e)
+            logger.warning("resume_error", code=err.code, recoverable=err.recoverable, partial=yielded_text, detail=err.detail)
+            yield f"data: {json.dumps(err.to_sse_frame(partial=yielded_text))}\n\n"
+            return # LLM 失败就结束，不落库
 
+        # ====== LLM 已成功: 落库 + 收尾 （落库失败不影响已成功的回复） =======
+        async def persist_new_messages():
             # 6 获取此时的图状态
             state = await app.aget_state(config)
 
@@ -200,16 +233,21 @@ async def resume(user_id: uuid.UUID, thread_id: uuid.UUID, approved: bool, db: A
                     rep = await msg_repo.add(conversation_id, "assistant", msg.content)
                     rep_emb = await asyncio.to_thread(embed_text, msg.content)
                     await msg_repo.set_embedding(rep.id, rep_emb)
+            return state
 
-            # 8 如果发现有 tool_calls 在图结构里，返回interrupt给前端
-            if state.next and "tools" in state.next:
-                yield f"data: {json.dumps({'type': 'interrupt', 'thread_id': str(thread_id), 'conversation_id': str(conversation_id)})}\n\n"
-
-            # 9 发送 done 给前端
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-        #  10 如果有错误，发送错误消息给前端
+        try:
+            state = await asyncio.shield(persist_new_messages())
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            logger.exception("resume_persist_failed", conversation_id=str(conversation_id))
+            state = await app.aget_state(config)
+            await mark_needs_sync(str(conversation_id), source="resume")
+
+        # 8 如果发现有 tool_calls 在图结构里，返回interrupt给前端
+        if state.next and "tools" in state.next:
+            yield f"data: {json.dumps({'type': 'interrupt', 'thread_id': str(thread_id), 'conversation_id': str(conversation_id)})}\n\n"
+
+        # 9 发送 done 给前端
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     return StreamingResponse(generator(), 
                              media_type="text/event-stream",

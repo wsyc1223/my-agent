@@ -99,3 +99,29 @@ async def get_report_detail(
         "updated_at": report.updated_at.isoformat() if report.updated_at else None
     }
 
+@router.delete("/conversations/{conversation_id}")
+async def delete_conversation(
+    conversation_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """ 删除指定会话及其所有关联数据 """
+    user_id = user.id
+    conv_repo = ConversationRepository(db)
+    conv = await conv_repo.get(user_id=user_id, conversation_id=conversation_id)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    await conv_repo.delete(user_id=user_id, conversation_id=conversation_id)
+
+    from src.audit.logger import audit_log
+    await audit_log(
+        action="delete_conversation",
+        resource="conversation",
+        resource_id=str(conversation_id),
+        user_id=user_id,
+        conversation_id=conversation_id,
+        success=True
+    )
+    return {"message": "会话删除成功", "conversation_id": str(conversation_id)}
+

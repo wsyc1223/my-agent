@@ -10,12 +10,8 @@ from sqlalchemy import select
 backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(backend_dir)
 
-# 预设的初始化测试文档（若数据库为空则加载这些文档）
-SEED_DOCUMENTS = [
-    "project_summary.md",
-    "multi_agent_rag_architecture.md",
-    "roadmap.md"
-]
+# 预设的专用初始化测试语料（锁定在 tests/evals/fixtures/ 目录下）
+FIXTURE_CORPUS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "test_corpus.md")
 
 async def ensure_test_user(session) -> "User":
     """获取或创建一个 Mock 测试用户"""
@@ -34,60 +30,48 @@ async def ensure_test_user(session) -> "User":
     return user
 
 async def seed_documents_if_empty(session, user_id: str):
-    """如果 file_chunks 表为空，则自动加载本地文档进行解析、分块和向量入库"""
-    from src.db.model import FileChunk
+    """安全增量追加模式：检查 dedicated test_corpus.md 是否已被索引，若未索引则解析入库"""
     from src.db.repository import FileDocumentRepository
     from src.service.file_research import process_file_in_background
 
-    result = await session.execute(select(FileChunk).where(FileChunk.user_id == user_id).limit(1))
-    has_chunks = result.scalars().first() is not None
+    doc_repo = FileDocumentRepository(session)
 
-    if has_chunks:
-        print("[INFO] Database already has chunks. Skipping seed phase.")
+    if not os.path.exists(FIXTURE_CORPUS_PATH):
+        print(f"[ERROR] Dedicated test corpus not found at {FIXTURE_CORPUS_PATH}.")
         return
 
-    print("[INFO] Database chunks table is empty. Starting seed phase...")
-    doc_repo = FileDocumentRepository(session)
-    project_root = os.path.dirname(backend_dir)
+    doc_name = "test_corpus.md"
+    print(f"[INFO] Checking dedicated test corpus: {FIXTURE_CORPUS_PATH}...")
+    with open(FIXTURE_CORPUS_PATH, "rb") as f:
+        file_data = f.read()
 
-    for doc_name in SEED_DOCUMENTS:
-        file_path = os.path.join(project_root, doc_name)
-        if not os.path.exists(file_path):
-            print(f"[WARNING] Seed file {file_path} not found. Skipping.")
-            continue
+    sha256 = hashlib.sha256(file_data).hexdigest()
+    text_content = file_data.decode("utf-8")
 
-        print(f"[INFO] Reading {doc_name}...")
-        with open(file_path, "rb") as f:
-            file_data = f.read()
-
-        sha256 = hashlib.sha256(file_data).hexdigest()
-        text_content = file_data.decode("utf-8")
-
-        # 检查是否已存在
-        existing = await doc_repo.get_by_sha256(user_id, sha256)
-        if existing and existing.status == "indexed":
-            print(f"[INFO] Document {doc_name} already indexed.")
-            continue
-        elif existing:
-            await doc_repo.delete(user_id, existing.id)
-            await session.commit()
-
-        # 创建 processing 状态的文档
-        doc = await doc_repo.create(
-            user_id=user_id,
-            filename=doc_name,
-            size_bytes=len(file_data),
-            sha256=sha256,
-            status="processing",
-            full_content=text_content
-        )
+    # 检查当前文件是否已存在于数据库中，若存在则跳过
+    existing = await doc_repo.get_by_sha256(user_id, sha256)
+    if existing and existing.status == "indexed":
+        print(f"[INFO] Document {doc_name} is already indexed in database. Skipping seed phase.")
+        return
+    elif existing:
+        await doc_repo.delete(user_id, existing.id)
         await session.commit()
-        await session.refresh(doc)
 
-        print(f"[INFO] Indexing {doc_name} in background...")
-        # 直接调用底层的后台计算流程
-        await process_file_in_background(doc.id, user_id, doc_name)
-        print(f"[INFO] Document {doc_name} indexing completed successfully.")
+    print(f"[INFO] Appending new document {doc_name} (2.4W+ words) into database...")
+    doc = await doc_repo.create(
+        user_id=user_id,
+        filename=doc_name,
+        size_bytes=len(file_data),
+        sha256=sha256,
+        status="processing",
+        full_content=text_content
+    )
+    await session.commit()
+    await session.refresh(doc)
+
+    print(f"[INFO] Indexing {doc_name} in background...")
+    await process_file_in_background(doc.id, user_id, doc_name)
+    print(f"[INFO] Document {doc_name} indexing completed successfully.")
 
 async def generate_golden_set(session, user_id: str, limit_queries: int = 15):
     """采样 chunks 并调用 DeepSeek 接口生成 golden_set.json"""

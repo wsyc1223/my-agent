@@ -2,17 +2,21 @@ import uuid
 import os
 from pathlib import Path
 import tempfile
-from fastapi import APIRouter, Depends, UploadFile, BackgroundTasks, HTTPException, File
+from fastapi import APIRouter, Depends, UploadFile, BackgroundTasks, HTTPException, File, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.db.session import get_db
 from src.utils.security import get_current_user
 from src.db.model import User
 from src.service.file_research import handle_file_upload
+from src.config import settings
+from src.limiter import limiter
 
 router = APIRouter(prefix="/file", tags=["file"])
 
 @router.post("/upload")
+@limiter.limit(settings.RATE_LIMIT_UPLOAD)
 async def upload_file(
+    request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
@@ -50,10 +54,28 @@ async def upload_file(
             file_path=temp_file.name, 
             db=db, 
             background_tasks=background_tasks)
+
+        from src.audit.logger import audit_log
+        await audit_log(
+            action="upload_file",
+            resource="file",
+            resource_id=res.get("document_id"),
+            user_id=user.id,
+            success=True,
+            detail={"filename": file.filename, "size_bytes": total_size}
+        )
         return res
     except Exception as e:
         if 'temp_file' in locals() and os.path.exists(temp_file.name):
             os.remove(temp_file.name)
+        from src.audit.logger import audit_log
+        await audit_log(
+            action="upload_file",
+            resource="file",
+            user_id=user.id if 'user' in locals() else None,
+            success=False,
+            detail={"filename": getattr(file, "filename", None), "error": str(e)}
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{document_id}")

@@ -1,9 +1,9 @@
 # 项目评估与一个月冲刺方案
 
-> 评估日期：2026-07-03
+> 初版日期：2026-07-03 ／ 二次更新：2026-07-09（评估体系已动工 + 联网核对 Agent 趋势）
 > 评估对象：智能文档研究 Agent（LangGraph 多 Agent RAG 对话系统）
 > 评估目标：在一个月内做出"能落地 + 能通过 Agent 开发岗技术面"的项目
-> 评估方法：全量本机代码静态核实 + 数据库审计交叉（见 bug.md）+ roadmap.md/question.md 一手材料交叉
+> 评估方法：全量本机代码静态核实 + 数据库审计交叉（见 bug.md）+ roadmap.md/question.md 一手材料 + **联网核对（LangChain 官方博客 2026-07、MCP 官方站）**
 > 证据标记：✅ 已亲自核实（读代码/查文件确认）／⚠️ 部分修／❌ 未修／🔍 需运行时验证
 
 ---
@@ -14,11 +14,12 @@
 |---|---|
 | **项目骨架** | 选型现代、架构合理（LangGraph 双图 + FastAPI + pgvector + Vue3），方向正确 |
 | **当前能落地吗** | ❌ 不能。核心演示路径有 3 个未修 bug（后台无中间过程、报告可能空白、侧边栏架构混乱），演示会翻车 |
-| **当前能过技术面吗** | ⚠️ 勉强过中小厂应用岗，大厂追问易塌。**评估体系 0% 是 2026 面试红线** |
-| **最大隐患** | 你把 SSRF 当简历亮点，但它有 DNS rebinding 漏洞未修——亮点变雷点 |
-| **roadmap 执行偏差** | 6/20 规划的"第一阶段致命缺失修补"两周过去 **0 进度**，时间全花在修 bug |
-| **一个月能到哪** | 项目竞争力从 **45-55% → 75-85%**（仅"项目作为技术面谈资"维度，不含算法/学历/HR） |
-| **核心建议** | **砍掉 roadmap 第三、四阶段**（MCP/多模型路由/GraphRAG），一个月只做三件事：① 修死 demo 路径 ② 补三个致命缺失（评估/错误分层/Agentic RAG）③ 工程闭环（Docker+可观测+少量测试） |
+| **当前能过技术面吗** | ⚠️ 勉强过中小厂应用岗，大厂追问易塌。评估体系已动工但有硬伤：**只测纯向量、没验证 reranker 收益、golden set 仅 8 条全项目自身文档** |
+| **最大隐患** | ① SSRF 亮点有 DNS rebinding 漏洞未修 ② 评估没对准简历亮点——你亮点是"两阶段 reranker"，但评估根本没测它有没有用 |
+| **roadmap 执行偏差** | 评估体系已动工（✅），但错误分层/Query Rewrite/Docker 仍 0% |
+| **联网核对结论** | 评估+数据驱动是 2026 核心方法论（LangChain 7-7 官方博客标题"Improving Agents is a Data Mining Problem"）。**你方向对，但闭环没做成** |
+| **一个月能到哪** | 项目竞争力从 **48-55% → 75-85%**（仅"项目作为技术面谈资"维度，不含算法/学历/HR） |
+| **核心建议** | **砍掉 roadmap 第三、四阶段**（MCP/多模型路由/GraphRAG），一个月做四件事：① 修死 demo 路径 ② **评估做成数据故事**（reranker 收益对比实验，性价比最高）③ 补致命题（错误分层/Query Rewrite）④ 工程闭环（Docker+可观测+cost 统计） |
 
 ---
 
@@ -35,6 +36,7 @@
    - `frontend/src/views/ChatView.vue`（侧边栏 + XSS）
    - `pyproject.toml` / `package.json`（技术栈与版本）
    - 目录结构（Docker/evals/tests 是否存在）
+   - **二次更新新增**：`backend/tests/evals/` 全量内容核实（golden_set.json / eval_retrieval.py / generate_eval_data.py / test_chat_cli.py / test_upload_cli.py，以及已装 ragas）
 
 2. **数据库实锤**（bug.md 第二轮已查，7-01）：
    - `file_reports` 唯一记录 `status=success` 但 `report_md` 长度=0
@@ -42,13 +44,17 @@
 
 3. **用户一手整理材料**：`bug.md`（60+ 缺陷 + 修复标注）、`roadmap.md`（6-20 规划）、`question.md`（6 大面试题逆向）
 
+4. **联网官方一手证据**（2026-07-09 核对）：
+   - LangChain 官方博客首页（最新文章 2026-07-08）：确认 Deep Agents 为旗舰方向、"Improving Agents is a Data Mining Problem"(7-7)、成本控制热点(7-2)、Model Neutrality(6-4)、Wiki Memory(6-30)
+   - MCP 官方站（modelcontextprotocol.io）：确认 MCP 是真实行业标准，被 Claude/ChatGPT/VS Code/Cursor 广泛支持
+
 ### 1.2 诚实声明（重要）
 
 > **关于"成功概率"**：Agent 开发岗面试通过率 = f(项目质量, 算法/八股基础, 学历筛选, 目标公司层级, 沟通表达, 竞品强度)。
 > 我**只能负责任地评估"项目作为技术面谈资的竞争力"这一维度**（基于一手代码证据）。
 > 你未提供：算法刷题量、八股掌握度、目标公司层级（大厂/中厂/创业）、投递时间窗口。这些会显著影响最终通过率。
 > 因此本文的概率区间是"项目竞争力"的相对评估，不是"拿到 offer 的绝对概率"。
-> **岗位市场需求/最新 JD 考点**：本文基于 question.md + roadmap.md 的一手整理 + 通用行业认知，**未联网核对 2026-07 最新岗位要求**。投递前请自行对照目标公司 JD 微调。
+> **联网状态**：已核对 LangChain 官方博客 + MCP 官方站的技术趋势。**未核对具体公司 JD**（岗位需求因公司而异，投递前请自行对照目标公司 JD 微调）。
 
 ---
 
@@ -85,7 +91,7 @@
 | 异步阻塞 to_thread | 🟢 已做 | ✅ 亮点 |
 | 多工具协议对齐 | 🟢 已修（曾是 bug，现 Command update+goto） | ✅ 但故事要更新 |
 | 深度研究 researcher+writer | 🟡 **Bug 5 致空报告**、无 Query Rewrite | ⚠️ 不完整 |
-| **评估体系（Evals）** | 🔴 **0%，无 evals 目录** | ❌ **面试红线** |
+| **评估体系（Evals）** | 🟡 **框架已有但做歪了**：8 条 golden set（全项目自身文档）、只测纯向量 Recall@K、无 Precision、ragas 装了没接通 | ❌ **缺对比数据，没对准亮点** |
 | **错误分层** | 🔴 **0%，tools.py 仍 return f"错误:..."** | ❌ |
 | **可观测性 tracing** | 🔴 30%，trace 串扰未修 | ❌ |
 | **Docker 部署** | 🔴 0% | ❌ |
@@ -96,11 +102,20 @@
 
 ## 三、致命不足分析（按"面试杀伤力"排序）
 
-### 3.1 🔴 评估体系 0% — 2026 面试第一红线
+### 3.1 🔴 评估体系已有框架但做歪了 — 没对准简历亮点（2026 面试红线）
 
-- **现状**：`backend/tests/` 仅 4 个文件解析单测（test_file_parser/chunk_line/indexing_service/retriever），**无 evals/ 目录，无 golden set，无 Recall/Precision/Faithfulness 指标**。
-- **杀伤力**：2026 年面试"不讨论如何评估 Agent 性能 = 红旗"。面试官一问"你怎么知道你的 RAG 检索效果好不好"，你答不上来 = 直接出局。
-- **根因**：roadmap 第一阶段 1.3 规划了，但两周没动。
+- **现状**（7-09 二次核实）：`backend/tests/evals/` 已建立，包含 `golden_set.json`（8 条）、`eval_retrieval.py`（Recall@1/3/5）、`generate_eval_data.py`（自动 seed 文档）、`test_chat_cli.py`、`test_upload_cli.py`，并已装 ragas。**框架动了，但有几个硬伤**：
+
+| 短板 | 证据 | 面试杀伤力 |
+|---|---|---|
+| **golden set 只 8 条，且全是你项目自己的文档**（roadmap/project_summary/architecture） | `golden_set.json` | 🔴 面试官一句"这能证明泛化吗"就堵死你。需 30+ 条，覆盖多文档、多跳、应答"不知道"的反例 |
+| **只测纯向量通道，没测你的"两阶段 reranker"** | `eval_retrieval.py` 只调 `vector_search_chunks`，没过 reranker | 🔴🔴 **最致命**——你简历亮点是"向量+reranker 两阶段"，但评估根本没验证 reranker 有没有用。面试官问"reranker 带来多少提升"，你答不出 |
+| **只有 Recall@K，没有 Precision@K** | `eval_retrieval.py` | 🔴 question.md Q4 明确问"Recall 和 Precision 区别/取舍"，你评估都没算 Precision |
+| **ragas 端到端评估没接通** | `test_chat_cli.py` 注释"check Taskiq Worker"，ragas 装了但没跑 | ⚠️ 检索 Recall 只证明"找得到"，Faithfulness 才证明"答得对" |
+| **想用 Taskiq+Redis 异步跑 ragas**（过度工程） | `test_doc.md` | ⚠️ 30 条评测同步跑就够，别为"异步管线"花时间，面试不会因此加分 |
+
+- **联网核对结论**：LangChain 7-7 官方博客标题就是 **"Improving Agents is a Data Mining Problem"**——评估+数据驱动迭代是 2026 核心方法论，不是边缘话题。你方向对，但**闭环没做成**。
+- **根因**：评估没对准你自己的简历亮点。正确的评估应该能回答"我的 reranker 到底带来多少 Recall 提升"——这才是面试官想听的数字。
 
 ### 3.2 🔴 核心演示路径 3 个未修 bug — demo 会翻车
 
@@ -148,6 +163,22 @@
 - `DeepResearchView.vue` **1377 行孤儿代码**（/research 重定向到 /，0 引用），仍在 bundle 里，含同款逻辑，维护负担 + 误导。
 - `window.__isDark/__userName` 全局挂载反模式（补充-49），登录时侧边栏显示空名。
 
+### 3.8 联网核对：2026-07 Agent 开发趋势 vs 你的项目
+
+> 来源：LangChain 官方博客（2026-07 最新）+ MCP 官方站。这是本次更新新增的对比维度。
+
+| 2026-07 趋势 | 官方证据 | 与你项目的关联 | 该不该做 |
+|---|---|---|---|
+| **评估+数据驱动迭代是核心方法论** | LangChain 7-7 博客标题"Improving Agents is a Data Mining Problem" | ✅ 你做评估方向正确，但闭环没做成（见 3.1） | 🔴 必做，且做成数据故事 |
+| **Deep Agents**（长时任务+子代理+prompt caching+动态子代理） | LangChain 旗舰概念，7 月多篇官方文章 | 🟡 你的"后台子 Agent 深度研究"符合精神，但无中间反馈（Bug 2）、无 prompt caching | 🟡 修 Bug 2 即契合；prompt caching 可讲不必做 |
+| **成本控制是热点** | "Your coding agent bill doubled"（7-2 官方博客） | 🔴 你 0 token/cost 统计，简历却写了"cost ceiling 安全阀" | 🔴 补 cost 统计，否则追问露馅 |
+| **Model Neutrality / 多模型路由** | 6-4 官方博客 | 🔴 你无多模型路由 | ❌ 不实现，口头讲清即可 |
+| **MCP 是真实行业标准** | MCP 官方站：Claude/ChatGPT/VS Code/Cursor 全支持，"USB-C for AI" | 🔴 你没做 | ❌ 不实现，口头讲清 MCP vs A2A 即可 |
+| **Wiki Memory** | 6-30 Harrison Chase 官方博客 | 🟡 你记忆架构薄弱 | 🟡 简化版窗口摘要即可 |
+| **Sandboxes/安全执行** | 官方博客 | 🟡 你有 SSRF 但有 rebinding 漏洞 | 🔴 修 SSRF（已在 3.3） |
+
+**关键洞察**：评估+数据驱动是 2026 官方定义的核心方法论，且你简历亮点（reranker）正需要评估来证明。**做"reranker 收益对比实验"这一件事，同时命中三个面试维度（Q4 指标量化 + 证明亮点 + 契合趋势）**——是性价比最高的投入。
+
 ---
 
 ## 四、成功概率评估
@@ -168,7 +199,7 @@
 9. 可观测性/成本
 10. 部署/工程化
 
-### 4.2 当前评分（7-03）
+### 4.2 当前评分（7-09 二次更新）
 
 | 项 | 得分 | 说明 |
 |---|---|---|
@@ -176,17 +207,17 @@
 | 2 错误分层 | 1/10 | 仅 catch return 字符串，无分层 |
 | 3 危险工具 | 5/10 | 有 HITL+SSRF，但 SSRF 有 rebinding 洞 |
 | 4 上下文/记忆 | 3/10 | 有 global_memory 开关，无分层、无窗口管理 |
-| 5 RAG 指标 | 0/10 | 无任何量化数据 |
+| 5 RAG 指标 | 2/10 | 有 Recall 框架但无对比数据、无 Precision、没测 reranker |
 | 6 Agentic RAG | 3/10 | 有 researcher+writer，无 Query Rewrite |
 | 7 框架选型 | 6/10 | 用了 LangGraph，能讲基本理由 |
-| 8 评估体系 | 0/10 | 完全缺失 |
-| 9 可观测性 | 2/10 | 仅回调，trace 串扰 |
+| 8 评估体系 | 3/10 | 框架已有但做歪：8 条 golden set、只测向量、ragas 未接通 |
+| 9 可观测性 | 2/10 | 仅回调，trace 串扰，无 cost 统计 |
 | 10 部署 | 0/10 | 无 Docker |
-| **合计** | **26/100** | |
+| **合计** | **31/100** | （较初版 26 分提升，因评估体系已动工） |
 
-> **当前项目竞争力：~45-55%**（折合区间，因为"能讲"不等于"答得好"，且有未修 bug 演示风险）。
+> **当前项目竞争力：~48-55%**（评估有框架但没改变"答不上数据"的现状，且未修 bug 演示风险仍在）。
 > **能过的面试**：中小厂/创业公司 Agent 应用岗技术面（项目能跑+有亮点）。
-> **过不了的**：大厂/算法平台岗（评估红线 + 追问易塌 + 演示翻车）。
+> **过不了的**：大厂/算法平台岗（评估没数据 + SSRF 有洞 + 演示翻车）。
 
 ### 4.3 一个月后评分（执行本文第五节方案后）
 
@@ -196,13 +227,13 @@
 | 2 错误分层 | 7/10 | +三层异常+error_handler 节点 |
 | 3 危险工具 | 8/10 | +修 SSRF rebinding（亮点变真亮点） |
 | 4 上下文/记忆 | 6/10 | +窗口摘要压缩（简化版分层） |
-| 5 RAG 指标 | 7/10 | +golden set+Recall/Precision+BM25 对比 |
+| 5 RAG 指标 | 8/10 | +Precision+**reranker 对比数据**+BM25 对比 |
 | 6 Agentic RAG | 7/10 | +Query Rewrite 节点 |
 | 7 框架选型 | 7/10 | +量化对比理由 |
-| 8 评估体系 | 7/10 | +CI 评估管线 |
-| 9 可观测性 | 6/10 | +修 trace 串扰+cost 统计 |
+| 8 评估体系 | 8/10 | +golden set 30+ + reranker 收益数据 + ragas Faithfulness + CI |
+| 9 可观测性 | 6/10 | +修 trace 串扰 + **cost/token 统计（2026 热点）** |
 | 10 部署 | 7/10 | +Docker Compose 一键起 |
-| **合计** | **70/100** | |
+| **合计** | **72/100** | （评估体系因已有框架，目标可更高） |
 
 > **一个月后项目竞争力：~75-85%**（取决于执行质量与投入时间）。
 > **能过的面试**：大多数 Agent 应用岗技术面。
@@ -210,12 +241,13 @@
 
 ### 4.4 概率提升的关键认知
 
-> ⚠️ **概率从 50% 涨到 80% 的关键不是"做多少新功能"，而是三件事：**
+> ⚠️ **概率从 50% 涨到 80% 的关键不是"做多少新功能"，而是四件事：**
 > 1. **演示不翻车**（修 Bug 2/4/5）——demo 翻车 = 面试直接结束，再多功能也白搭
-> 2. **致命题答全**（评估/错误分层/Query Rewrite）——这是"有没有"问题，没有就是红线
-> 3. **亮点补成无洞**（修 SSRF）——有洞的亮点比没亮点更扣分
+> 2. **评估做成数据故事**（reranker 收益对比实验）——一份数据同时命中 Q4 指标量化 + 证明简历亮点 + 契合"Data Mining"官方趋势，**性价比最高**
+> 3. **致命题答全**（错误分层/Query Rewrite）——这是"有没有"问题，没有就是红线
+> 4. **亮点补成无洞**（修 SSRF + 补 cost 统计）——有洞的亮点比没亮点更扣分，且 cost 是 2026 热点
 
-**反面警示**：如果你继续过去两周的模式（边修 bug 边欠新债、roadmap 致命缺失 0 推进），一个月后概率仍是 50%，因为致命缺失不会自己消失。
+**反面警示**：如果你继续过去两周的模式（边修 bug 边欠新债、评估做了但不做对比实验），一个月后概率仍是 50%，因为"有框架没数据"和"没框架"在面试官眼里差别不大。
 
 ---
 
@@ -235,8 +267,9 @@
 ### 5.2 保留并做透什么（按周排期）
 
 > 假设每周能投入 ~25-30 小时。若投入不足，按优先级从上往下砍。
+> **关键变化**（7-09 更新）：评估体系已有框架，所以从"Week 2 新建"提前到"Week 1 补强+对比实验"——框架已在，只差数据。
 
-#### Week 1：修死核心 demo 路径（最高优先，演示不翻车）
+#### Week 1：修死核心 demo 路径 + 评估对比实验（最高优先）
 
 | 任务 | 改哪里 | 验收 |
 |---|---|---|
@@ -244,23 +277,26 @@
 | **修 Bug 2 后台无中间过程** | `file_research.py` 改 `ainvoke`→`astream`，在 researcher/tools/writer 各节点发 `progress/tool_call/thinking` 中间事件（notifier 已支持，只是没人调） | 前端能看到"正在检索/正在生成" |
 | **修 Bug 4 侧边栏架构** | `ChatView.vue:196` 改 showReport 逻辑为"多卡片纵向堆叠"，Agent 状态作为常驻卡片，报告卡片叠加在上 | 状态栏与报告共存 |
 | **修 SSRF rebinding** | `tools.py:25` 改 `getaddrinfo` 全解析 + 请求时用 `httpx` transport 绑定已校验 IP + IPv6 检查 | 能讲清 rebinding 防护 |
-| **修 Bug 6 关联** | 补 `MessageOut.associated_task_id`（补充-17），前端去重不再重复刷屏 | 历史加载不重复 push |
+| **🔥 评估对比实验**（性价比最高） | `eval_retrieval.py` 加一组对比：纯向量 Recall@5 vs **向量+reranker Recall@5**，再加 Precision@K；golden set 扩到 30+（多文档+多跳+反例） | 产出一份数据表：reranker 带来 X% 提升 |
 
-#### Week 2：补三个致命缺失（面试红线）
+> **为什么评估提前到 Week 1**：框架已搭好，补对比实验只需改 `eval_retrieval.py` 加一路 reranker 调用 + 扩 golden set。**1-2 天就能产出演示用数据**，且这数据贯穿后续所有面试讲述。别等。
+
+#### Week 2：补致命题 + 评估端到端
 
 | 任务 | 改哪里 | 验收 |
 |---|---|---|
-| **评估体系** | 新建 `backend/tests/evals/`：golden_set（20-30 条 Q&A）+ `eval_rag.py`（Recall@5/Precision@5/Faithfulness）+ `eval_tool_selection.py` | `pytest evals/` 跑出指标报告 |
 | **错误分层** | `tools.py` 引入 `ToolRetryableError/ToolFatalError`；`research_graph.py` 加 `error_handler` 节点（可重试→retry≤3，致命→error_summary→END） | 工具失败有结构化 ToolMessage |
 | **Query Rewrite** | `research_graph.py` researcher 前加 `query_rewriter` 节点（拆子问题+路由 vector/grep/hybrid） | 能讲 Adaptive RAG |
+| **ragas 端到端** | 跑通 Faithfulness/Answer Relevance（**同步跑 30 条即可，砍掉 Taskiq+Redis 异步过度工程**） | 有端到端质量分数 |
+| **修 Bug 6 关联** | 补 `MessageOut.associated_task_id`（补充-17），前端去重不再重复刷屏 | 历史加载不重复 push |
 
-#### Week 3：工程闭环 + BM25
+#### Week 3：工程闭环 + BM25 + cost 统计
 
 | 任务 | 改哪里 | 验收 |
 |---|---|---|
 | **BM25 混合检索** | `retriever.py` 加 tsvector+GIN 通道，RRF 融合向量+BM25，reranker 精排 | golden set 上 Recall@5 提升，有对比数据 |
 | **Docker Compose** | 根目录 `docker-compose.yml`（pgvector + backend + frontend）+ Dockerfile | `docker compose up` 一键起 |
-| **可观测性修** | `observability.py` 改每请求新建 Langfuse handler；加 cost/token 统计 span | trace 不串扰 |
+| **可观测性修 + cost 统计** | `observability.py` 改每请求新建 Langfuse handler；加 cost/token 统计 span（2026 热点） | trace 不串扰 + 有 cost 数据 |
 | **上下文管理** | `graph.py` agent_node 前加 token 计数，超 0.8 窗口→摘要压缩 | 长会话不 400 |
 
 #### Week 4：测试加固 + 简历话术 + 面试演练
@@ -269,19 +305,20 @@
 |---|---|
 | **关键路径测试** | 给 SSE 流式/HITL resume/检索召回 各补 3-5 个测试（不必追求覆盖率，追求"能讲测试策略"） |
 | **删孤儿代码** | 删 `DeepResearchView.vue`/`ResearchSidebar.vue`/`stores/research.ts`，清理 `window.__` 反模式 |
-| **简历三段式话术** | 每个亮点写成"为什么做→怎么做→效果数据"。**特别更新 SSRF 故事**（从"我做了防护"→"我发现初版有 rebinding 漏洞，改用 getaddrinfo+IP 绑定修复"，这反而是更好的故事） |
+| **简历三段式话术** | 每个亮点写成"为什么做→怎么做→**效果数据**"。重点：① SSRF 故事改成"发现 rebinding 漏洞→getaddrinfo+IP 绑定修复" ② reranker 亮点配上"Recall@5 从 X% 提到 Y%"实测数据 |
 | **面试模拟** | 对着 question.md 6 大题 + 10 项追问清单自测，卡壳的回去补 |
 
 ### 5.3 优先级铁律
 
 > 如果时间不够，**按此顺序保底**（砍后面的保前面的）：
 > 1. 修 Bug 2/4/5 + SSRF（demo 不翻车）
-> 2. 评估体系（红线）
+> 2. **评估对比实验**（reranker 收益数据——框架已在，1-2 天产出，性价比最高）
 > 3. 错误分层 + Query Rewrite（致命题）
-> 4. Docker（工程化）
-> 5. BM25 + 可观测 + 测试（锦上添花）
+> 4. Docker + cost 统计（工程化 + 2026 热点）
+> 5. BM25 + 可观测修 trace + 测试（锦上添花）
 >
 > **宁可少做做透，不要多做做浅。** 面试官追问"你最大的技术难点"时，只有亲手踩坑的功能你才答得好。
+> **特别提醒**：评估体系别再过度工程（Taskiq+Redis 异步管线），同步跑 30 条够用，把时间留给"产出演示用数据"。
 
 ---
 
@@ -300,8 +337,9 @@
 | 7 | `backend/src/tools.py` 全文 | 错误 return 字符串无分层 | 引入异常体系 + error_handler 节点 |
 | 8 | `backend/src/graph.py` | 无上下文长度管理 | agent_node 前 token 计数+摘要 |
 | 9 | `backend/src/schemas.py` | MessageOut 缺 associated_task_id/id | 补字段，对齐前后端契约 |
-| 10 | 新建 `backend/tests/evals/` | 评估体系 0 | golden set + 指标脚本 |
+| 10 | `backend/tests/evals/eval_retrieval.py` | 只测纯向量、无 Precision、没测 reranker | **加 reranker 对比实验**（纯向量 vs 向量+reranker Recall@5）+ Precision@K + golden set 扩 30+ |
 | 11 | 新建 `docker-compose.yml` | 无部署 | pgvector+backend+frontend |
+| 12 | `backend/src/observability.py` + agent.py | 无 cost/token 统计（2026 热点） | 加 cost span，简历"cost ceiling"才有数据支撑 |
 
 ### 6.2 应改（工程质量）
 
@@ -343,15 +381,18 @@
 
 - **"演示翻车"比"功能少"更致命**：面试官对一个跑不起来的项目印象极差。Bug 2/4/5 不修，其它都白做。
 - **简历亮点要能扛追问**：SSRF、协议对齐这些你列的亮点，背后都有真实 bug 故事（rebinding 漏洞、Command resume 语义错误）。**讲"我发现了什么坑、怎么修的"比讲"我做了什么"更有说服力**——前提是真修了。
-- **评估体系是性价比最高的投入**：代码量不大（一个 golden set + 两个脚本），但面试杀伤力最大。Week 2 第一件事就做它。
+- **评估体系是性价比最高的投入**：框架已搭好，**只差一组 reranker 对比实验**。这份数据同时回答 Q4（指标量化）+ 证明简历亮点（reranker 真有效）+ 契合 LangChain 7-7 官方"Data Mining"趋势。Week 1 就做，别等。
+- **评估别过度工程**：你已经倾向用 Taskiq+Redis 异步跑 ragas——面试不会因"异步管线"加分，30 条同步跑够用。把时间留给"产出演示用数据"。
+- **cost 统计是 2026 热点**：LangChain 7-2 官方博客"Your coding agent bill doubled"。你简历写了"cost ceiling 安全阀"却无 token/cost 数据，追问即露馅。补 cost span 是小工作量大火候。
 
 ---
 
 ## 附：本文证据可信度
 
-- ✅ 已核实项（亲自读代码/查文件）：技术栈版本、Docker 缺失、evals 缺失、测试数量、JWT 实现、retriever 方式、research_graph 节点、tools 错误处理、Bug 2/4/5 状态、XSS 已修、SSRF 未修
+- ✅ 已核实项（亲自读代码/查文件）：技术栈版本、Docker 缺失、**evals 实际内容（golden_set 8 条/eval_retrieval 只测向量/ragas 未接通）**、测试数量、JWT 实现、retriever 方式、research_graph 节点、tools 错误处理、Bug 2/4/5 状态、XSS 已修、SSRF 未修
+- ✅ 已联网核对（2026-07-09）：LangChain 官方博客（Deep Agents / Data Mining 评估方法论 / 成本控制 / Model Neutrality / Wiki Memory）、MCP 官方站（MCP 是真实行业标准）
 - ⚠️ 基于 bug.md 标注未逐一复核的：其余 (Resolved) 安全项（建议按 6.2 逐条复核）
 - 🔍 需运行时验证：Bug 1"第二次能正常显示"的竞态现象（bug.md 已标注 Medium 置信度）
-- ❌ 未联网核对：2026-07 最新 Agent 岗 JD 考点、LangGraph 最新版本特性（建议投递前自行核对官方文档与目标 JD）
+- ❌ 未核对：具体公司 JD（岗位需求因公司而异，投递前请自行对照）
 
 > 本文所有"不足"结论均有一手代码行号支撑，所有"概率"均明确标注为"项目竞争力维度"且声明不含项目外因素。如对任何结论有异议，可指出具体条目，我重新核实代码。

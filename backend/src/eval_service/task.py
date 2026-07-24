@@ -1,4 +1,5 @@
 import os
+import logging
 import sys
 import asyncio
 from langfuse import Langfuse
@@ -18,6 +19,7 @@ EVALUATORS = [
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
 
 # 定义 Tasking 异步测评任务
 @redis_broker.task
@@ -25,7 +27,7 @@ async def evaluate_trace_task(trace_id: str, user_id: str) -> None:
     """
     异步评估任务: 根据 trace_id 从 Langfuse 拉取数据, 使用 Ragas 打分并回传
     """
-    print(f"[EVAL] Received evaluation task for Trace: {trace_id}")
+    logger.info("eval_task_received", trace_id=trace_id)
 
     # 实例化 Langfuse 客户端 (会自动从环境变量读取 key)
     lf = Langfuse()
@@ -48,9 +50,9 @@ async def evaluate_trace_task(trace_id: str, user_id: str) -> None:
                 is_transient = any(kw in err_msg for kw in transient_keywords)
 
                 if is_not_found:
-                    print(f"[EVAL] Trace {trace_id} not found on Langfuse yet (attempt {attempt + 1}/{max_attempts}). Waiting {wait_time}s...")
+                    logger.info("trace_not_ready", trace_id=trace_id, attempt=attempt+1)
                 elif is_transient:
-                    print(f"[EVAL] Transient network error (attempt {attempt + 1}/{max_attempts}): {type(e).__name__}. Retrying in {wait_time}s...")
+                    logger.warning("eval_transient_error", error=type(e).__name__, attempt=attempt+1)
                 else:
                     raise e
                 await asyncio.sleep(wait_time)
@@ -65,12 +67,10 @@ async def evaluate_trace_task(trace_id: str, user_id: str) -> None:
                 scores = await evaluator.evaluate(trace_data)
                 all_scores.update(scores)
             except Exception as e:
-                print(f"评估器 {evaluator.__class__.__name__} 运行失败: {e}")
+                logger.error("evaluator_failed", evaluator=evaluator.__class__.__name__, error=str(e))
 
         for name, value in all_scores.items():
             lf.create_score(trace_id=trace_id, name=name, value=value)
 
     except Exception as e:
-        print(f"[EVAL-ERROR] Failed to run Ragas evaluation. Reason: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        logger.exception("ragas_eval_failed", trace_id=trace_id)

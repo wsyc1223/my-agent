@@ -63,3 +63,9 @@ class ReportRequest(BaseModel):
     query: str = Field(..., min_length=2, max_length=2000)
     file_ids: list[UUID] | None = None
     session_id: UUID | None = None
+
+class QueryRewriteOutput(BaseModel):
+    standalone_query: str = Field(description="结合历史对话消解代词、补充语境后的独立单句查询")
+    sub_queries: list[str] = Field(description="拆解出的2~3个原子级搜索子问题，用于提高召回覆盖率")
+    need_retrieval: bool = Field(description="判断该提问是否需要检索文档知识库（闲聊或非文档问题为False）")
+

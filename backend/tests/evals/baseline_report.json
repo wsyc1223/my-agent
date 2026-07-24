@@ -1,0 +1,240 @@
+{
+  "version": "V0_Baseline",
+  "total_cases": 15,
+  "retrieval_metrics": {
+    "recall_at_1": 0.7333,
+    "recall_at_3": 0.9333,
+    "recall_at_5": 0.9333
+  },
+  "ragas_metrics": {
+    "faithfulness": 0.9144444444444445,
+    "answer_relevancy": 0.8125590873494736
+  },
+  "detailed_cases": [
+    {
+      "case_id": 1,
+      "query": "在RAG系统中，RRF融合打分后是如何筛选最终结果的？",
+      "target_chunk_id": 36,
+      "retrieved_chunk_ids": [
+        24,
+        6,
+        36,
+        40,
+        28
+      ],
+      "hit_in_top5": true,
+      "generated_answer": "根据上下文，RRF融合打分后，取出Top 20的候选集，最后送入`bge-reranker-base`交叉编码器进行深度精准打分，挑选出Top 5喂给LLM。",
+      "reference_answer": "经过RRF融合打分后，取出Top 20的候选集，最后送入bge-reranker-base交叉编码器进行深度精准打分，挑选出Top 5喂给LLM。"
+    },
+    {
+      "case_id": 2,
+      "query": "三态熔断器（LLM_BREAKER）在HALF-OPEN状态下是如何工作的？",
+      "target_chunk_id": 30,
+      "retrieved_chunk_ids": [
+        19,
+        30,
+        31,
+        20,
+        4
+      ],
+      "hit_in_top5": true,
+      "generated_answer": "根据上下文，三态熔断器（LLM_BREAKER）在HALF-OPEN状态下的工作方式如下：\n\nHALF-OPEN（半开状态）允许试探性地放行 `1` 次 LLM 请求。若该请求成功，则熔断器恢复至 CLOSED 状态并清空失败计数器；若该请求依然失败，则重新切回 OPEN 状态并重新开始 30 秒冷却。",
+      "reference_answer": "在HALF-OPEN（半开状态）下，熔断器允许试探性地放行1次LLM请求。若该请求成功，则熔断器恢复至CLOSED状态并清空失败计数器；若该请求依然失败，则重新切回OPEN状态并重新开始30秒冷却。"
+    },
+    {
+      "case_id": 3,
+      "query": "文档中提到的结构感知切块是什么？它和当前使用的固定窗口切块有什么区别？",
+      "target_chunk_id": 11,
+      "retrieved_chunk_ids": [
+        11,
+        15,
+        13,
+        10,
+        31
+      ],
+      "hit_in_top5": true,
+      "generated_answer": "根据提供的上下文，结构感知切块是一种按文档结构边界进行切块的方法，它使用不同的切分策略（如对Markdown文件按标题切分、对Python文件按函数/类切分、对Vue文件按模板/脚本切分）。而当前使用的固定窗口切块是固定以1200字符为窗口进行切块。两者的主要区别在于：结构感知切块根据文档的语义结构边界进行切分，而固定窗口切块仅按固定字符数进行切分。",
+      "reference_answer": "结构感知切块是按文档结构边界切块，当前使用的是固定窗口1200字符。升级后的策略包括：对于.md文件按##标题切块（使用MarkdownHeaderSplitter），对于.py文件按def/class切块（使用PythonFunctionSplitter），对于.vue文件按template/script切块（使用VueSFCSplitter）。"
+    },
+    {
+      "case_id": 4,
+      "query": "在RAG混合召回中，RRF算法的评分公式是什么？",
+      "target_chunk_id": 35,
+      "retrieved_chunk_ids": [
+        24,
+        36,
+        6,
+        5,
+        13
+      ],
+      "hit_in_top5": false,
+      "generated_answer": "根据上下文，RRF（互惠名次融合）算法的评分公式为：\n\n$$RRF\\_Score(d) = \\sum_{m \\in M} \\frac{1}{k + r_m(d)}$$\n\n其中：\n- $M$ 为召回通道集合（本系统 $M = \\{\\text{BM25}, \\text{Vector}\\}$）；\n- $r_m(d)$ 为文档片段 $d$ 在通道 $m$ 中的排名位置（从 1 开始）；\n- $k$ 为常数常取值 `60`，用以降低靠后排名的分值权重悬殊。",
+      "reference_answer": "Reciprocal Rank Fusion（互惠名次融合）算法的评分公式为：$$RRF\\_Score(d) = \\sum_{m \\in M} \\frac{1}{k + r_m(d)}$$，其中 $M$ 为召回通道集合（本系统 $M = \\{\\text{BM25}, \\text{Vector}\\}$），$r_m(d)$ 是文档 $d$ 在通道 $m$ 中的排名。"
+    },
+    {
+      "case_id": 5,
+      "query": "系统在限流时，如果请求超限会返回什么错误码？",
+      "target_chunk_id": 26,
+      "retrieved_chunk_ids": [
+        26,
+        38,
+        17,
+        21,
+        31
+      ],
+      "hit_in_top5": true,
+      "generated_answer": "根据上下文，当请求超出限制时，Slowapi 中间件会拦截并返回 429 帧，对应的错误码是 `ERR_RATE_LIMIT_EXCEEDED_429`。",
+      "reference_answer": "当请求超出限制时，Slowapi 中间件会拦截并返回 429 帧，错误码为 `ERR_RATE_LIMIT_EXCEEDED_429`。"
+    },
+    {
+      "case_id": 6,
+      "query": "在SSRF防御中，is_safe_url函数是如何进行私有IP段拦截的？",
+      "target_chunk_id": 34,
+      "retrieved_chunk_ids": [
+        34,
+        22,
+        35,
+        23,
+        13
+      ],
+      "hit_in_top5": true,
+      "generated_answer": "根据上下文，`is_safe_url`函数通过三级拦截进行私有IP段防御，其中第三级是私有IP段拦截：使用Python `ipaddress`模块，校验解析后的IP是否属于以下私有/保留网段：\n* `127.0.0.0/8` (环回地址)\n* `10.0.0.0/8` (A类私有网段)\n* `172.16.0.0/12` (B类私有网段)\n* `192.168.0.0/16` (C类私有网段)\n* `169.254.0.0/16` (本地链路地址/云元数据地址)\n* `::1/128` (IPv6环回地址)",
+      "reference_answer": "在SSRF防御中，is_safe_url函数使用Python ipaddress模块，校验解析后的IP是否属于以下私有/保留网段：127.0.0.0/8（环回地址）、10.0.0.0/8（A类私有网段）、172.16.0.0/12（B类私有网段）、192.168.0.0/16（C类私有网段）、169.254.0.0/16（本地链路地址/云元数据地址）以及::1/128（IPv6环回地址）。"
+    },
+    {
+      "case_id": 7,
+      "query": "在RAG系统的模型路由设计中，对于不同复杂度的查询是如何处理的？",
+      "target_chunk_id": 9,
+      "retrieved_chunk_ids": [
+        9,
+        4,
+        11,
+        14,
+        6
+      ],
+      "hit_in_top5": true,
+      "generated_answer": "根据上下文，在RAG系统的模型路由设计中，对于不同复杂度的查询是通过`ModelRouter`类中的`route`方法处理的。该方法首先通过`classify_complexity`对查询复杂度进行分类，然后根据分类结果路由到不同的模型：\n\n- **简单问题** → 路由到 `deepseek-v4-flash`（便宜快速）\n- **复杂推理** → 路由到 `deepseek-v4-pro`（高质量）\n- **主模型故障** → 自动降级到 `qwen-plus`（fallback）\n\n面试话术总结为：\"简单查询走 Flash 降低成本，复杂推理走 Pro 保证质量，主模型故障自动降级到千问——三层模型路由。\"",
+      "reference_answer": "根据查询复杂度路由到不同模型：简单问题走deepseek-v4-flash（便宜快速），复杂推理走deepseek-v4-pro（高质量），主模型故障时自动降级到qwen-plus。"
+    },
+    {
+      "case_id": 8,
+      "query": "这个RAG项目在可观测性方面做了哪些升级？请详细说明其全链路追踪的结构。",
+      "target_chunk_id": 8,
+      "retrieved_chunk_ids": [
+        8,
+        11,
+        14,
+        15,
+        2
+      ],
+      "hit_in_top5": true,
+      "generated_answer": "根据给定的上下文，该RAG项目在可观测性方面从\"有 Langfuse 回调\"升级到\"全链路 Tracing\"。其全链路追踪的结构如下：\n\n每个 Agent 调用生成完整 trace，结构为：\n```\nTrace\n├── Span: query_rewrite     (输入query → 输出子问题列表)\n├── Span: retrieval          (检索参数 → 召回文档 → 分数)\n│   ├── Span: bm25_search\n│   ├── Span: vector_search\n│   └── Span: reranker\n├── Span: tool_execution     (工具名 → 参数 → 结果 → 耗时)\n├── Span: llm_generation     (prompt → completion → token 数)\n└── Span: total_cost         (总 token × 单价)\n```\n\n此外，还包含关键指标 Dashboard，监控：\n- P95 响应延迟\n- 每次查询平均 token 消耗\n- 工具调用成功率\n- 检索命中率（有 golden set 后可计算）",
+      "reference_answer": "项目从'有 Langfuse 回调'升级到'全链路 Tracing'，每个 Agent 调用生成完整的 trace，结构如下：Trace 包含 Span: query_rewrite（输入query → 输出子问题列表）、Span: retrieval（检索参数 → 召回文档 → 分数，其下又包含 Span: bm25_search、Span: vector_search、Span: reranker）、Span: tool_execution（工具名 → 参数 → 结果 → 耗时）、Span: llm_generation（prompt → completion → token 数）、Span: total_cost（总 token × 单价）。关键指标 Dashboard 包括：P95 响应延迟、每次查询平均 token 消耗、工具调用成功率、检索命中率（有 golden set 后可计算）。"
+    },
+    {
+      "case_id": 9,
+      "query": "当熔断器处于OPEN状态时，它会如何处理LLM调用请求？冷却时间是多少秒？",
+      "target_chunk_id": 19,
+      "retrieved_chunk_ids": [
+        19,
+        31,
+        30,
+        21,
+        4
+      ],
+      "hit_in_top5": true,
+      "generated_answer": "根据上下文，当熔断器处于OPEN状态时，会直接拒绝所有LLM调用请求，立即抛出`LLMBreakerOpenError`，绝不向第三方API发起任何网络连接。冷却时间是30秒。",
+      "reference_answer": "当熔断器处于OPEN（开启状态）时，直接拒绝所有LLM调用请求，立即抛出LLMBreakerOpenError，绝不向第三方API发起任何网络连接。经过冷却时间30秒后，状态自动切换至HALF-OPEN。"
+    },
+    {
+      "case_id": 10,
+      "query": "在RAG系统中，如何实现分层记忆架构来隔离项目级规则、用户偏好和会话上下文？",
+      "target_chunk_id": 6,
+      "retrieved_chunk_ids": [
+        6,
+        13,
+        14,
+        11,
+        3
+      ],
+      "hit_in_top5": true,
+      "generated_answer": "根据给定的上下文，分层记忆架构通过以下方式隔离项目级规则、用户偏好和会话上下文：\n\n- **Layer 3: 系统级 (System Prompt)**：存储不变的项目规则。\n- **Layer 2: 用户偏好 (UserPreference 表)**：存储跨会话持久的信息，如回答风格偏好、常用工具偏好和自定义指令。\n- **Layer 1: 会话上下文 (LangGraph State)**：存储当前会话信息，使用滑动窗口保留最近 N 条消息，超出窗口时进行摘要压缩。\n- **Layer 0: 跨会话语义检索 (pgvector RAG)**：在 `global_memory` 开启时按需检索历史会话。",
+      "reference_answer": "根据文档，分层记忆架构分为四层：Layer 3 系统级（System Prompt）存储不变的项目规则；Layer 2 用户偏好（UserPreference 表）存储跨会话持久的信息，如回答风格偏好、常用工具偏好和自定义指令；Layer 1 会话上下文（LangGraph State）管理当前会话，使用滑动窗口保留最近N条记录，超出窗口则进行摘要压缩；Layer 0 跨会话语义检索（pgvector RAG）在global_memory开启时按需检索历史会话。"
+    },
+    {
+      "case_id": 11,
+      "query": "当审计日志写入数据库失败时，系统会如何处理？",
+      "target_chunk_id": 39,
+      "retrieved_chunk_ids": [
+        39,
+        27,
+        33,
+        32,
+        21
+      ],
+      "hit_in_top5": true,
+      "generated_answer": "根据上下文，当审计日志写入数据库发生失败时，系统仅记录 warning 日志，**绝对不阻断和影响主业务流程的正常响应**。",
+      "reference_answer": "系统仅记录 warning 日志，绝对不阻断和影响主业务流程的正常响应。"
+    },
+    {
+      "case_id": 12,
+      "query": "这个项目的第四阶段有哪些可选加分项？",
+      "target_chunk_id": 15,
+      "retrieved_chunk_ids": [
+        15,
+        11,
+        3,
+        16,
+        13
+      ],
+      "hit_in_top5": true,
+      "generated_answer": "根据给定的上下文，第四阶段（可选加分项）包括：\n- Graph RAG / 结构感知切块 / 审计日志",
+      "reference_answer": "第四阶段（可选加分项）包括：Graph RAG / 结构感知切块 / 审计日志。"
+    },
+    {
+      "case_id": 13,
+      "query": "根据目前的项目进展，评估体系的完成度是多少？有什么潜在风险？",
+      "target_chunk_id": 2,
+      "retrieved_chunk_ids": [
+        5,
+        2,
+        13,
+        28,
+        1
+      ],
+      "hit_in_top5": true,
+      "generated_answer": "根据上下文，评估体系的完成度为 **0%**（🔴 0%），被标记为“致命缺失”。潜在风险是：面试中会被追问，且“不讨论如何评估 Agent 性能 = 红旗”。",
+      "reference_answer": "根据文本片段，评估体系的完成度为0%，且标注为“致命缺失”。"
+    },
+    {
+      "case_id": 14,
+      "query": "系统自研的LazyAsyncPostgresSaver类是如何解决事件循环绑定异常的？",
+      "target_chunk_id": 20,
+      "retrieved_chunk_ids": [
+        20,
+        31,
+        17,
+        37,
+        2
+      ],
+      "hit_in_top5": true,
+      "generated_answer": "根据上下文，系统自研的 `LazyAsyncPostgresSaver` 类通过采用**延迟初始化（Lazy Initialization）设计模式**来解决事件循环绑定异常。它在首次触发 `get_tuple`、`put` 或 `setup` 方法时，才在运行中的事件循环上下文中安全激活底层连接池，从而避免了在应用启动阶段事件循环尚未完全就绪时直接实例化 `AsyncPostgresSaver` 所触发的异常。",
+      "reference_answer": "系统自研了LazyAsyncPostgresSaver类，继承自AsyncPostgresSaver。它采用延迟初始化（Lazy Initialization）设计模式，在首次触发get_tuple、put或setup方法时，才在运行中的事件循环上下文中安全激活底层连接池，从而避免了在应用启动阶段事件循环尚未完全就绪时直接实例化AsyncPostgresSaver导致的底层事件循环绑定异常。"
+    },
+    {
+      "case_id": 15,
+      "query": "在智能文档研究 Agent 中，如何实现成本控制？",
+      "target_chunk_id": 16,
+      "retrieved_chunk_ids": [
+        16,
+        3,
+        12,
+        14,
+        13
+      ],
+      "hit_in_top5": true,
+      "generated_answer": "根据上下文，智能文档研究 Agent 中通过以下方式实现成本控制：\n\n1. **三层模型路由（Flash/Pro/Fallback）**：根据任务复杂度动态选择不同成本等级的模型。\n2. **cost ceiling 成本控制**：设置成本上限，防止单次查询成本过高。\n3. **错误分层降级**：在出现错误时自动降级到更低成本的方案。\n4. **单次查询平均成本降低 XX%**：通过上述机制实现了可量化的成本降低效果。",
+      "reference_answer": "通过实现三层模型路由（Flash/Pro/Fallback）+ 错误分层降级 + cost ceiling 成本控制，单次查询平均成本降低 XX%。"
+    }
+  ]
+}

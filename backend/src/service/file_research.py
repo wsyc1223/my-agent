@@ -1,4 +1,5 @@
 import uuid
+import logging
 import os
 import hashlib
 import asyncio
@@ -18,6 +19,8 @@ from src.db.model import FileDocument
 from src.file_research.research_graph import research_app
 from src.observability import get_langfuse_handler
 from typing import AsyncGenerator
+
+logger = logging.getLogger(__name__)
 
 file_indexing_executor = ThreadPoolExecutor(
     max_workers=4,
@@ -132,8 +135,7 @@ async def process_file_in_background(
             await doc_repo.update_status(document_id, "indexed")
 
         except Exception as e:
-            import traceback
-            traceback.print_exc()
+            logger.exception("file_index_failed", document_id=document_id)
             await doc_repo.update_status(document_id, "failed", error_message=str(e))
 
 active_tasks: dict[str, asyncio.Task] = {}
@@ -196,20 +198,29 @@ async def run_research_in_background(
                     "langfuse_user_id": str(user_id),
                     "langfuse_tags": ["deep_research"]
                 },
-                "callbacks": [handler]
+                "callbacks": [handler],
+                "recursion_limit": 50
             }
 
-            # 调佣深度研究图
-            await research_app.ainvoke(input_state, config=config)
+            try:
+                # 调佣深度研究图
+                await asyncio.wait_for(
+                    research_app.ainvoke(input_state, config=config),
+                    timeout = settings.RESEARCH_TASK_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                from src.exceptions import LLMTimeoutError
+                raise LLMTimeoutError("研究任务执行超时", detail=f"任务超时 {settings.RESEARCH_TASK_TIMEOUT} 秒限制")
 
             # 获取图状态
             final_state = await research_app.aget_state(config)
             report_md = final_state.values.get("report_md", "")
+            degraded = final_state.values.get("degraded", False)
 
             # 存库
             await report_repo.update_report(
                 report_id=report.id,
-                status="success",
+                status="degraded" if degraded else "success",
                 report_md=report_md
             )
 
@@ -289,39 +300,71 @@ async def run_research_in_background(
             raise
 
         except Exception as e:
-            await report_repo.update_report(
-                report_id=report.id,
-                status="error",
-                error_message=str(e)
-            )
-            await task_repo.update_status(task.id, "failed", str(e))
-            fail_msg = await msg_repo.add(
-                conversation_id=conversation_id,
-                role="subagent",
-                content=f"深度研究任务执行失败: {str(e)}",
-                referred_message_id=trigger_message_id,
-                associated_task_id=task.id
-            )
+            if type(e).__name__ == "GraphRecursionError":
+                final_state = await research_app.aget_state(config)
+                from src.file_research.research_graph import _build_degraded_report
+                report_md = _build_degraded_report(final_state)
 
-            await notifier_manager.send_message(
-                conversation_id=str(conversation_id),
-                data={
-                    "type": "subagent_result",
-                    "task": {
-                        "id": str(task.id),
-                        "task_type": "deep_research",
-                        "report_id": str(report.id),
-                        "status": "failed",
-                        "error_message": str(e)
-                    },
-                    "message": {
-                        "id": fail_msg.id,
-                        "role": fail_msg.role,
-                        "content": fail_msg.content,
-                        "referred_message_id": trigger_message_id,
-                        "associated_task_id": str(task.id)
+                # 更新报告 degraded 降级成功状态，保存现有素材
+                await report_repo.update_report(
+                    report_id=report.id,
+                    status="degraded",
+                    report_md=report_md
+                )
+                await task_repo.update_status(task.id, "success")
+
+                # 依然推送 subagent_result, 但是标记为 success
+                await notifier_manager.send_message(
+                    conversation_id=str(conversation_id),
+                    data={
+                        "type": "subagent_result",
+                        "task": {
+                            "id": str(task.id),
+                            "task_type": "deep_research",
+                            "report_id": str(report.id),
+                            "status": "success"
+                        },
+                        "message": {
+                            "role": "subagent",
+                            "content": "深度研究步骤超限，已自动终止并为您生成初步降级报告"
+                        }
                     }
-                }
-            )
+                )
+            else:
+                # 原有的普通异常失败逻辑保持不变
+                await report_repo.update_report(
+                    report_id=report.id,
+                    status="error",
+                    error_message=str(e)
+                )
+                await task_repo.update_status(task.id, "failed", str(e))
+                fail_msg = await msg_repo.add(
+                    conversation_id=conversation_id,
+                    role="subagent",
+                    content=f"深度研究任务执行失败: {str(e)}",
+                    referred_message_id=trigger_message_id,
+                    associated_task_id=task.id
+                )
+
+                await notifier_manager.send_message(
+                    conversation_id=str(conversation_id),
+                    data={
+                        "type": "subagent_result",
+                        "task": {
+                            "id": str(task.id),
+                            "task_type": "deep_research",
+                            "report_id": str(report.id),
+                            "status": "failed",
+                            "error_message": str(e)
+                        },
+                        "message": {
+                            "id": fail_msg.id,
+                            "role": fail_msg.role,
+                            "content": fail_msg.content,
+                            "referred_message_id": trigger_message_id,
+                            "associated_task_id": str(task.id)
+                        }
+                    }
+                )
         finally:
             active_tasks.pop(str(task.id), None)

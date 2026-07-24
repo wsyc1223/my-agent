@@ -132,36 +132,6 @@ class AsyncTask(Base):
     # 和具体结果一对一关联
     file_report = relationship("FileReport", back_populates="task", uselist=False, cascade="all, delete-orphan")
 
-
-# class ResearchSession(Base):
-#     __tablename__ = "research_sessions"
-#
-#     id = Column(UUID, primary_key=True, default=uuid.uuid4)
-#     user_id = Column(UUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-#     title = Column(String(256), nullable=True)
-#     created_at = Column(DateTime, server_default=func.now())
-#     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
-#
-#     user = relationship("User")
-#     messages = relationship("ResearchMessage", back_populates="session", cascade="all, delete-orphan", order_by="ResearchMessage.created_at")
-#     reports = relationship("FileReport", back_populates="session", cascade="all, delete-orphan")
-
-# class ResearchMessage(Base):
-#     __tablename__ = "research_messages"
-#
-#     id = Column(BigInteger, primary_key=True, autoincrement=True)
-#     session_id = Column(UUID, ForeignKey("research_sessions.id", ondelete="CASCADE"), index=True)
-#     role = Column(String(16), nullable=False)
-#     content = Column(Text, nullable=True)
-#     tool_calls = Column(JSONB, nullable=True)
-#
-#     attached_file_ids = Column(JSONB, nullable=True)
-#     generated_report_id = Column(UUID, ForeignKey("file_reports.id", ondelete="SET NULL"), nullable=True)
-#     created_at = Column(DateTime, server_default=func.now())
-#
-#     session = relationship("ResearchSession", back_populates="messages")
-#     report = relationship("FileReport", back_populates="messages")
-
 class FileReport(Base):
     __tablename__ = "file_reports"
 
@@ -183,3 +153,23 @@ class FileReport(Base):
     user = relationship("User")
     conversation = relationship("Conversation", back_populates="reports")
     task = relationship("AsyncTask", back_populates="file_report")
+
+class AuditLog(Base):
+    """ 安全审计日志表 """
+    __tablename__ = "audit_logs"
+
+    id = Column(UUID, primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    conversation_id = Column(UUID, ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    action = Column(String(50), nullable=False, index=True)
+    resource = Column(String(50), nullable=False)
+    resource_id = Column(String(255), nullable=True)
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(Text, nullable=True)
+    success = Column(Boolean, nullable=False, default=True)
+    detail = Column(JSONB, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), index=True)
+
+    user = relationship("User")
+    conversation = relationship("Conversation")

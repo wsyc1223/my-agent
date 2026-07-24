@@ -1,11 +1,14 @@
 from typing import Annotated, TypedDict
 import operator
+import openai
 from pydantic import SecretStr
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, AIMessage
+import structlog
+from src.resilience import safe_ainvoke, LLM_RETRY_POLICY, ainvoke_with_context_recovery
 
 from src.config import settings
 from src.file_research.retriever import (
@@ -14,6 +17,8 @@ from src.file_research.retriever import (
 )
 from src.graph import checkpointer
 from src.tools import search_web
+
+logger = structlog.get_logger()
 
 # 工具集
 research_tools = [
@@ -44,30 +49,79 @@ class ResearchState(TypedDict):
     messages: Annotated[list, add_messages]
     report_md: str
     file_ids: Annotated[list[str], merge_files]
+    degraded: bool
+    errors: Annotated[list[dict], operator.add]
 
 llm = ChatOpenAI(
     model="deepseek-v4-pro",
     api_key=SecretStr(settings.DEEPSEEK_API_KEY),
     base_url=settings.DEEPSEEK_BASE_URL,
-    streaming=True
+    streaming=True,
+    timeout=settings.LLM_TIMEOUT,
+    max_retries=settings.LLM_MAX_ATTEMPTS
 )
+
+flash_llm = ChatOpenAI(
+        model="deepseek-v4-flash",
+        api_key=SecretStr(settings.DEEPSEEK_API_KEY),
+        base_url=settings.DEEPSEEK_BASE_URL,
+        streaming=True,
+        timeout=settings.LLM_TIMEOUT,
+        max_retries=settings.LLM_MAX_ATTEMPTS,
+)
+
 research_llm = llm.bind_tools(research_tools)
-writer_llm = llm
+writer_llm = llm.with_fallbacks(
+    [flash_llm],
+    exceptions_to_handle=(
+        openai.RateLimitError,
+        openai.InternalServerError,
+        openai.APITimeoutError,
+        openai.APIConnectionError
+    ),
+)
 
 async def researcher_node(state: ResearchState) -> dict:
-    """ 用户回复用户的消息，但是不会写文件 """
-    messages = [SystemMessage(content=RESEARCH_PROMPT)] + state["messages"]
-    response = await research_llm.ainvoke(messages)
-    return {"messages": [response]}
+    """ 回复消息，但是不会写文件 """
+    try:
+        messages = [SystemMessage(content=RESEARCH_PROMPT)] + state["messages"]
+        response = await ainvoke_with_context_recovery(research_llm, messages)
+        return {"messages": [response]}
+    except Exception as e:
+        return {"errors": [{"node": "researcher", "error": str(e), "type": type(e).__name__}]}
 
 async def writer_node(state: ResearchState) -> dict:
     """ 用户写文件，但是不会回复用户的消息 """
     messages = [SystemMessage(content=WRITER_PROMPT)] + state["messages"]
-    response = await writer_llm.ainvoke(messages)
+    response = await ainvoke_with_context_recovery(writer_llm, messages)
     return {"messages": [response],
-            "report_md": response.content}
+            "report_md": response.content,
+            "degraded": False}
+
+def _build_degraded_report(state: ResearchState) -> str:
+    """ B6 降级: writer 失败时， 把 researcher 的原始情报 (AIMessage 内容) 拼成报告降级 """
+    msgs = state.get("messages", [])
+    intel = [m.content for m in msgs if isinstance(m, AIMessage) and m.content]
+    body = "\n\n---\n\n".join(intel) if intel else "(情报专家未产出可用素材)"
+    return (
+        "> ⚠️ 本报告为降级输出：撰写模型多次重试失败，"
+        "以下为情报专家收集的原始素材，未经排版润色。\n\n" + body
+    )
+
+async def writer_error_handler(state: ResearchState) -> dict:
+    """ writer 重试耗尽后的兜底: 不调 LLM (它会一起挂), 纯拼接原始情报降级。"""
+    logger.warning("writer_degraded", intel_count=sum(1 for m in state.get("messages", []) if isinstance(m, AIMessage)))
+    report = _build_degraded_report(state)
+    return {
+        "report_md": report,
+        "degraded": True,
+        "messages" : [AIMessage(content=report)], # 镜像 writer_node 的返回形状，保持历史完整
+        "errors": [{"node": "writer", "error": "撰写节点失败，已执行原始情报合并降级"}]
+    }
 
 def should_continue(state: ResearchState) -> str:
+    if state.get("errors"):
+        return "writer"
     messages = state["messages"]
     tool_count = sum(1 for m in messages if hasattr(m, 'type') and m.type == 'tool')
     if tool_count >= 20:
@@ -77,15 +131,11 @@ def should_continue(state: ResearchState) -> str:
     if hasattr(last_message, "tool_calls") and last_message.tool_calls:
         return "tools"
 
-    # 如果最后一条消息没有触发任何工具调用，且整场会话中从未发生过检索，说明是闲聊，直接体面结束
-    if tool_count == 0:
-        return END
-
     return "writer"
 
 workflow = StateGraph(ResearchState)
-workflow.add_node("researcher", researcher_node)
-workflow.add_node("writer", writer_node)
+workflow.add_node("researcher", researcher_node, retry_policy=LLM_RETRY_POLICY)
+workflow.add_node("writer", writer_node, retry_policy=LLM_RETRY_POLICY, error_handler=writer_error_handler)
 workflow.add_node("tools", tool_node)
 
 workflow.set_entry_point("researcher")

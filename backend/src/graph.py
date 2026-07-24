@@ -9,8 +9,11 @@ from langgraph.graph.message import add_messages
 from src.tools import tools
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg_pool import AsyncConnectionPool
+from src.resilience import safe_ainvoke, LLM_RETRY_POLICY, ainvoke_with_context_recovery
 from psycopg.rows import dict_row
+import operator
 
+# 数据库连接池
 DATABASE_URL_PSYCOPG = settings.DATABASE_URL_PSYCOPG
 pool = AsyncConnectionPool(
     conninfo=DATABASE_URL_PSYCOPG,
@@ -27,6 +30,8 @@ llm = ChatOpenAI(
     api_key = SecretStr(settings.DEEPSEEK_API_KEY),
     base_url = settings.DEEPSEEK_BASE_URL,
     streaming=True,
+    timeout=settings.LLM_TIMEOUT,
+    max_retries=settings.LLM_MAX_ATTEMPTS,
 )
 
 llm_with_tools = llm.bind_tools(tools)
@@ -35,9 +40,13 @@ tool_node = ToolNode(tools)
 
 class State(TypedDict):
     messages: Annotated[list, add_messages]
+    errors: Annotated[list[dict], operator.add]
 
 def should_continue(state: State):
     """判断是否需要继续调用模型，主要根据当前消息列表中是否包含工具调用的结果来决定。"""
+    if state.get("errors"):
+        return END
+
     messages = state["messages"]
     tool_count = sum(1 for m in messages if hasattr(m, 'type') and m.type == 'tool')
     if tool_count >= 100:
@@ -50,13 +59,17 @@ def should_continue(state: State):
 
 async def agent_node(state: State) -> State:
     """
-    Agent 决策节点: 调用 LLM 生成下一步动作(或工具调用)
+    Agent 决策节点: 调用 LLM 生成下一步动作(或工具调用),
+    捕获重试耗尽后非正常退出
     """
-    response = await llm_with_tools.ainvoke(state["messages"])
-    return {"messages": [response]}
+    try:
+        response = await ainvoke_with_context_recovery(llm_with_tools, state["messages"])
+        return {"messages": [response]}
+    except Exception as e:
+        return {"errors": [{"node": "agent", "error": str(e), "type": type(e).__name__}]}
 
 workflow = StateGraph(State)
-workflow.add_node("agent", agent_node)
+workflow.add_node("agent", agent_node, retry_policy=LLM_RETRY_POLICY)
 workflow.add_node("tools", tool_node)
 workflow.set_entry_point("agent")
 workflow.add_conditional_edges("agent", should_continue)
